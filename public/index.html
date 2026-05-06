@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crypto Payment Resolver UI</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header class="header">
+        <div>
+          <div class="title">Crypto Payment Resolver</div>
+          <div class="subtitle">Local UI for your API (no Zendesk yet)</div>
+        </div>
+        <div class="pill" id="serverPill">Checking server...</div>
+      </header>
+
+      <div class="grid">
+        <section class="card">
+          <div class="cardTitle">1) Resolve transaction</div>
+          <div class="row">
+            <label class="label" for="ticketId">Ticket ID</label>
+            <input id="ticketId" class="input" placeholder="e.g. 1001" />
+          </div>
+          <div class="row">
+            <label class="label" for="txid">TXID</label>
+            <input
+              id="txid"
+              class="input mono"
+              placeholder="Tx hash from Ethereum / BSC / Polygon / Solana / Tron"
+            />
+          </div>
+          <div class="actions">
+            <button id="btnResolve" class="btn primary">Resolve</button>
+            <button id="btnResolveSample" class="btn">Use sample (not found)</button>
+          </div>
+          <div class="hint">
+            Tip: Supports Ethereum, BSC, Polygon, Solana, and Tron transaction hashes.
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="cardTitle">2) Ops input (Confirmo expected)</div>
+          <div class="row">
+            <label class="label" for="ticketIdConfirmo">Ticket ID</label>
+            <input id="ticketIdConfirmo" class="input" placeholder="same ticket id as above" />
+          </div>
+          <div class="row">
+            <label class="label" for="invoiceId">Invoice ID</label>
+            <input id="invoiceId" class="input" placeholder="e.g. INV-12345" />
+          </div>
+          <div class="row">
+            <label class="label" for="expectedAssetNetwork">Expected network and asset</label>
+            <input
+              id="expectedAssetNetwork"
+              class="input"
+              list="assetNetworkExamples"
+              placeholder="e.g. USDT (TRON) or Ether (Ethereum)"
+            />
+            <datalist id="assetNetworkExamples">
+              <option value="USDT (TRON)"></option>
+              <option value="USDT (Ethereum)"></option>
+              <option value="SOL (Solana)"></option>
+              <option value="USDC (Ethereum)"></option>
+              <option value="Ether (Ethereum)"></option>
+              <option value="USDT (Polygon)"></option>
+              <option value="TRX (TRON)"></option>
+            </datalist>
+          </div>
+          <div class="row">
+            <label class="label" for="expectedWalletAddress">Expected wallet address</label>
+            <input
+              id="expectedWalletAddress"
+              class="input mono"
+              placeholder="e.g. invoice paid-to wallet"
+            />
+          </div>
+          <div class="actions">
+            <button id="btnConfirmo" class="btn primary">Submit Confirmo input</button>
+          </div>
+          <div class="hint">
+            This calls <span class="mono">POST /zendesk/confirmo-input</span> with one field:
+            <span class="mono">expected_asset_network</span>.
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="cardTitle">3) Wallet reply</div>
+          <div class="row">
+            <label class="label" for="ticketId2">Ticket ID</label>
+            <input id="ticketId2" class="input" placeholder="same ticket id as above" />
+          </div>
+          <div class="row">
+            <label class="label" for="message">User message</label>
+            <textarea
+              id="message"
+              class="input mono"
+              rows="3"
+              placeholder="e.g. this is my wallet address T... please recover"
+            ></textarea>
+          </div>
+          <div class="actions">
+            <button id="btnWallet" class="btn primary">Process wallet reply</button>
+            <button id="btnWalletSample" class="btn">Use sample wallet</button>
+          </div>
+          <div class="hint">
+            This calls <span class="mono">POST /zendesk/wallet-reply</span>
+          </div>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="cardTitle">Result</div>
+        <div class="split">
+          <div>
+            <div class="label">Request</div>
+            <pre class="pre" id="reqOut">-</pre>
+          </div>
+          <div>
+            <div class="label">Response</div>
+            <pre class="pre" id="resOut">-</pre>
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <div>
+          Open:
+          <a class="link" href="/debug-tickets" target="_blank" rel="noreferrer">/debug-tickets</a>
+        </div>
+      </footer>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
