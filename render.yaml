@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: zendesk-resolver-api
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: INTERNAL_API_KEY
+        sync: false
+      - key: ETHERSCAN_API_KEY
+        sync: false
+      - key: BSCSCAN_API_KEY
+        sync: false
+      - key: POLYGONSCAN_API_KEY
+        sync: false

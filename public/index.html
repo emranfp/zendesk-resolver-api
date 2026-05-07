@@ -7,17 +7,50 @@
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+    <div class="grid-overlay"></div>
     <div class="container">
-      <header class="header">
-        <div>
+      <header class="header fade-in">
+        <div class="heroCopy">
+          <div class="eyebrow">Zendesk + Crypto Recovery Console</div>
           <div class="title">Crypto Payment Resolver</div>
-          <div class="subtitle">Local UI for your API (no Zendesk yet)</div>
+          <div class="subtitle">Resolve transactions, validate expected wallet, and drive recovery flow</div>
         </div>
-        <div class="pill" id="serverPill">Checking server...</div>
+        <div class="statusWrap">
+          <div class="pill" id="serverPill">Checking server...</div>
+        </div>
       </header>
 
-      <div class="grid">
-        <section class="card">
+      <section class="metrics fade-up">
+        <div class="metricCard">
+          <div class="metricLabel">Flow</div>
+          <div class="metricValue">3-Step Recovery</div>
+        </div>
+        <div class="metricCard">
+          <div class="metricLabel">Networks</div>
+          <div class="metricValue">EVM + Sol + Tron</div>
+        </div>
+        <div class="metricCard">
+          <div class="metricLabel">Mode</div>
+          <div class="metricValue">Secure API Key</div>
+        </div>
+      </section>
+
+      <section class="card securityCard fade-up">
+        <div class="cardTitle">API Access</div>
+        <div class="row">
+          <label class="label" for="apiKey">Internal API Key</label>
+          <input id="apiKey" class="input mono" placeholder="Paste INTERNAL_API_KEY" />
+        </div>
+        <div class="actions">
+          <button id="btnSaveApiKey" class="btn primary">Save Key</button>
+          <button id="btnClearApiKey" class="btn ghost">Clear</button>
+        </div>
+      </section>
+
+      <div class="grid flowGrid">
+        <section class="card fade-up">
           <div class="cardTitle">1) Resolve transaction</div>
           <div class="row">
             <label class="label" for="ticketId">Ticket ID</label>
@@ -38,9 +71,11 @@
           <div class="hint">
             Tip: Supports Ethereum, BSC, Polygon, Solana, and Tron transaction hashes.
           </div>
+          <div class="label" style="margin-top: 10px;">Resolve Result</div>
+          <div class="pre pre-summary" id="resolveStepOut">-</div>
         </section>
 
-        <section class="card">
+        <section class="card fade-up delay-1">
           <div class="cardTitle">2) Ops input (Confirmo expected)</div>
           <div class="row">
             <label class="label" for="ticketIdConfirmo">Ticket ID</label>
@@ -83,48 +118,67 @@
             This calls <span class="mono">POST /zendesk/confirmo-input</span> with one field:
             <span class="mono">expected_asset_network</span>.
           </div>
+          <div class="label" style="margin-top: 10px;">Ops Input Result</div>
+          <div class="pre pre-summary" id="confirmoStepOut">-</div>
         </section>
 
-        <section class="card">
+        <section class="card fade-up delay-2">
           <div class="cardTitle">3) Wallet reply</div>
-          <div class="row">
-            <label class="label" for="ticketId2">Ticket ID</label>
-            <input id="ticketId2" class="input" placeholder="same ticket id as above" />
-          </div>
-          <div class="row">
-            <label class="label" for="message">User message</label>
-            <textarea
-              id="message"
-              class="input mono"
-              rows="3"
-              placeholder="e.g. this is my wallet address T... please recover"
-            ></textarea>
-          </div>
-          <div class="actions">
-            <button id="btnWallet" class="btn primary">Process wallet reply</button>
-            <button id="btnWalletSample" class="btn">Use sample wallet</button>
-          </div>
-          <div class="hint">
-            This calls <span class="mono">POST /zendesk/wallet-reply</span>
+          <div class="split">
+            <div>
+              <div class="row">
+                <label class="label" for="ticketId2">Ticket ID</label>
+                <input id="ticketId2" class="input" placeholder="same ticket id as above" />
+              </div>
+              <div class="row">
+                <label class="label" for="message">User message</label>
+                <textarea
+                  id="message"
+                  class="input mono"
+                  rows="3"
+                  placeholder="e.g. this is my wallet address T... please recover"
+                ></textarea>
+              </div>
+              <div class="actions">
+                <button id="btnWallet" class="btn primary">Process wallet reply</button>
+                <button id="btnWalletSample" class="btn">Use sample wallet</button>
+              </div>
+              <div class="hint">
+                This calls <span class="mono">POST /zendesk/wallet-reply</span>
+              </div>
+            </div>
+            <div>
+              <div class="label">Wallet Reply Result</div>
+              <div class="pre pre-summary" id="walletStepOut">-</div>
+            </div>
           </div>
         </section>
       </div>
 
-      <section class="card">
-        <div class="cardTitle">Result</div>
-        <div class="split">
+      <section class="card fade-up delay-2">
+        <details id="resultSectionToggle" open>
+          <summary class="resultSummary">
+            <span class="cardTitle">Result</span>
+            <span class="resultToggleHint">Hide/Unhide</span>
+          </summary>
+          <div class="split">
           <div>
             <div class="label">Request</div>
             <pre class="pre" id="reqOut">-</pre>
           </div>
           <div>
             <div class="label">Response</div>
-            <pre class="pre" id="resOut">-</pre>
+            <div class="pre pre-summary" id="resSummary">-</div>
+            <details class="jsonDetails">
+              <summary>Show full response JSON</summary>
+              <pre class="pre" id="resOut">-</pre>
+            </details>
           </div>
-        </div>
+          </div>
+        </details>
       </section>
 
-      <footer class="footer">
+      <footer class="footer fade-up delay-2">
         <div>
           Open:
           <a class="link" href="/debug-tickets" target="_blank" rel="noreferrer">/debug-tickets</a>

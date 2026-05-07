@@ -1,9 +1,16 @@
-require("dotenv").config();
+require("dotenv").config({ quiet: true });
 
 const express = require("express");
 const axios = require("axios");
 const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 const { createZendeskClient } = require("./zendeskClient");
+const {
+  matchPayment,
+  normalizeWalletForCompare,
+  computeMatchDetails
+} = require("./lib/paymentDecision");
 
 // Force-disable proxy env so local broken proxy settings (e.g. 127.0.0.1:9)
 // cannot hijack outbound blockchain API calls.
@@ -23,9 +30,33 @@ const app = express();
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+app.use((req, res, next) => {
+  const started = Date.now();
+  const requestId = req.get("x-request-id") || crypto.randomUUID();
+  req.requestId = requestId;
+  res.setHeader("x-request-id", requestId);
+  logEvent("info", "request_start", {
+    request_id: requestId,
+    method: req.method,
+    path: req.path
+  });
+  res.on("finish", () => {
+    logEvent("info", "request_end", {
+      request_id: requestId,
+      method: req.method,
+      path: req.path,
+      status_code: res.statusCode,
+      duration_ms: Date.now() - started
+    });
+  });
+  next();
+});
 
 const APP_VERSION = "zendesk-post-v1";
 const PORT = process.env.PORT || 3000;
+const NODE_ENV = String(process.env.NODE_ENV || "development").toLowerCase();
+const IS_PRODUCTION = NODE_ENV === "production";
+const INTERNAL_API_KEY = String(process.env.INTERNAL_API_KEY || "");
 
 const USDT_ETH_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 const USDT_BSC_CONTRACT = "0x55d398326f99059ff775485246999027b3197955";
@@ -40,6 +71,8 @@ const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY || ETHERSCAN_API_KEY;
 const POLYGONSCAN_API_KEY = process.env.POLYGONSCAN_API_KEY || ETHERSCAN_API_KEY;
 const AXIOS_HTTP_OPTIONS = { proxy: false, timeout: 15000 };
 const http = axios.create(AXIOS_HTTP_OPTIONS);
+const RETRY_BASE_DELAY_MS = Number(process.env.HTTP_RETRY_BASE_DELAY_MS || 300);
+const RETRY_MAX_ATTEMPTS = Number(process.env.HTTP_RETRY_MAX_ATTEMPTS || 3);
 const EVM_RPC_URLS = {
   Ethereum: [
     "https://ethereum-rpc.publicnode.com",
@@ -54,12 +87,210 @@ const SOLANA_RPC_URLS = ["https://api.mainnet-beta.solana.com", "https://solana-
 const SOLANA_USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoN3dV5fVYwSdhLkY6";
 const SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-// Temporary memory only.
-// If you stop the server, this data disappears.
-// Later, this will be replaced with a real database.
-const tickets = {};
+const TICKETS_STORE_PATH = path.join(__dirname, "data", "tickets-store.json");
+const tickets = loadTicketsFromDisk();
 
 const zendesk = createZendeskClient();
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function logEvent(level, message, meta = {}) {
+  const payload = {
+    ts: nowIso(),
+    level,
+    message,
+    ...meta
+  };
+  const line = JSON.stringify(payload);
+  if (level === "error") {
+    console.error(line);
+    return;
+  }
+  console.log(line);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldRetryAxiosError(error) {
+  const status = error && error.response ? Number(error.response.status) : 0;
+  if (!status) return true; // network/dns/timeout
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
+http.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error && error.config ? error.config : null;
+    if (!config) throw error;
+    config.__retryCount = Number(config.__retryCount || 0);
+    if (!shouldRetryAxiosError(error) || config.__retryCount >= RETRY_MAX_ATTEMPTS - 1) {
+      throw error;
+    }
+    config.__retryCount += 1;
+    const delay = RETRY_BASE_DELAY_MS * Math.pow(2, config.__retryCount - 1);
+    await sleep(delay);
+    return http.request(config);
+  }
+);
+
+function ensureTicketsStoreDir() {
+  const dir = path.dirname(TICKETS_STORE_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+function loadTicketsFromDisk() {
+  try {
+    if (!fs.existsSync(TICKETS_STORE_PATH)) {
+      return {};
+    }
+    const raw = fs.readFileSync(TICKETS_STORE_PATH, "utf8");
+    if (!raw.trim()) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    console.warn(`[startup] Failed to read ticket store: ${error.message}`);
+    return {};
+  }
+}
+
+function persistTicketsToDisk() {
+  try {
+    ensureTicketsStoreDir();
+    const tmpPath = `${TICKETS_STORE_PATH}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(tickets, null, 2), "utf8");
+    fs.renameSync(tmpPath, TICKETS_STORE_PATH);
+  } catch (error) {
+    console.error(`[storage] Failed to persist ticket store: ${error.message}`);
+  }
+}
+
+function saveTicketState(ticketId, nextState) {
+  tickets[ticketId] = nextState;
+  persistTicketsToDisk();
+  return tickets[ticketId];
+}
+
+function hasNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isAllowedNetworkName(network) {
+  const allowed = new Set(["Ethereum", "BSC", "Polygon", "opBNB", "Tron", "Solana"]);
+  return allowed.has(String(network || ""));
+}
+
+function requireInternalApiKey(req, res, next) {
+  if (!INTERNAL_API_KEY) {
+    return res.status(503).json({
+      version: APP_VERSION,
+      status: "MISCONFIGURED",
+      message: "INTERNAL_API_KEY is not configured on server"
+    });
+  }
+
+  const headerKey = req.get("x-api-key");
+  const authHeader = req.get("authorization");
+  const bearerKey =
+    authHeader && authHeader.toLowerCase().startsWith("bearer ")
+      ? authHeader.slice(7).trim()
+      : "";
+  const incomingKey = headerKey || bearerKey;
+
+  if (!incomingKey || incomingKey !== INTERNAL_API_KEY) {
+    return res.status(401).json({
+      version: APP_VERSION,
+      status: "UNAUTHORIZED",
+      message: "Missing or invalid API key"
+    });
+  }
+
+  return next();
+}
+
+function blockInProduction(req, res, next) {
+  if (!IS_PRODUCTION) {
+    return next();
+  }
+
+  return res.status(404).json({
+    version: APP_VERSION,
+    status: "NOT_FOUND",
+    message: "Endpoint disabled in production"
+  });
+}
+
+function validatePaymentTicketBody(req, res, next) {
+  const ticketId = req.body && req.body.ticket_id;
+  const txid = req.body && req.body.txid;
+
+  if (!hasNonEmptyString(ticketId)) {
+    return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
+  }
+  if (!hasNonEmptyString(txid)) {
+    return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing txid" });
+  }
+
+  return next();
+}
+
+function validateConfirmoInputBody(req, res, next) {
+  const ticketId = req.body && req.body.ticket_id;
+  const confirmoInvoiceId = req.body && req.body.confirmo_invoice_id;
+  const expectedWalletAddress = req.body && req.body.expected_wallet_address;
+  const expectedAssetNetworkRaw =
+    (req.body && (req.body.expected_asset_network || req.body.expected_payment_method || req.body.expected_asset)) ||
+    "";
+  const expectedNetworkRaw = (req.body && req.body.expected_network) || "";
+  const expectedTokenRaw = (req.body && req.body.expected_token) || "";
+  const parsed = parseExpectedAssetNetwork(expectedAssetNetworkRaw);
+  const normalizedNetwork = normalizeExpectedNetworkName(expectedNetworkRaw || parsed.network);
+  const normalizedToken = normalizeExpectedTokenName(expectedTokenRaw || parsed.token);
+
+  if (!hasNonEmptyString(ticketId)) {
+    return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
+  }
+  if (!hasNonEmptyString(confirmoInvoiceId)) {
+    return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing confirmo_invoice_id" });
+  }
+  if (!hasNonEmptyString(expectedWalletAddress)) {
+    return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing expected_wallet_address" });
+  }
+  if (!normalizedToken || normalizedToken === "UNKNOWN") {
+    return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Invalid expected token" });
+  }
+  if (!isAllowedNetworkName(normalizedNetwork)) {
+    return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Invalid expected network" });
+  }
+
+  return next();
+}
+
+function validateWalletReplyBody(req, res, next) {
+  const ticketId = req.body && req.body.ticket_id;
+  const hasMessage = hasNonEmptyString(req.body && req.body.message);
+  const hasRefundWallet = hasNonEmptyString(req.body && req.body.refund_wallet);
+
+  if (!hasNonEmptyString(ticketId)) {
+    return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
+  }
+  if (!hasMessage && !hasRefundWallet) {
+    return res.status(400).json({
+      version: APP_VERSION,
+      status: "ERROR",
+      message: "Missing message or refund_wallet"
+    });
+  }
+
+  return next();
+}
 
 function createTicketState(ticketId) {
   return {
@@ -101,7 +332,7 @@ function createTicketState(ticketId) {
 
 function upsertTicket(ticketId) {
   if (!tickets[ticketId]) {
-    tickets[ticketId] = createTicketState(ticketId);
+    saveTicketState(ticketId, createTicketState(ticketId));
   }
   return tickets[ticketId];
 }
@@ -126,7 +357,7 @@ function normalizeEthereumResult(txid, tx, tokenDetection) {
     token_standard: tokenDetection?.token_standard || "UNKNOWN",
     explorer_link: `https://etherscan.io/tx/${txid}`,
     from: tx.from || null,
-    to: tx.to || null
+    to: tokenDetection?.to || tx.to || null
   };
 }
 
@@ -165,6 +396,49 @@ function getKnownEvmTokenByContract(network, contractAddress) {
   }
 
   return null;
+}
+
+function decodeTopicAddress(topicValue) {
+  const clean = String(topicValue || "").toLowerCase().replace(/^0x/, "");
+  if (clean.length < 40) return null;
+  return `0x${clean.slice(-40)}`;
+}
+
+function pickTransferRecipient(transfer) {
+  if (!transfer || typeof transfer !== "object") return null;
+  return (
+    transfer.to ||
+    transfer.toAddress ||
+    transfer.to_address ||
+    transfer.receiver ||
+    transfer.recipient ||
+    (transfer.transferToAddressList && transfer.transferToAddressList[0]) ||
+    null
+  );
+}
+
+async function detectEvmTransferRecipientFromReceipt({ chainId, network, txid }) {
+  let receipt = await fetchEvmTransactionReceiptFromEtherscanV2({
+    chainId,
+    apiKey: ETHERSCAN_API_KEY,
+    txid
+  });
+  if (!receipt) {
+    receipt = await fetchEvmReceiptFromRpc({ network, txid });
+  }
+  if (!receipt || !Array.isArray(receipt.logs)) {
+    return null;
+  }
+  const transferLog = receipt.logs.find((log) => {
+    if (!log || !Array.isArray(log.topics) || !log.topics[0]) {
+      return false;
+    }
+    return String(log.topics[0]).toLowerCase() === ERC20_TRANSFER_TOPIC;
+  });
+  if (!transferLog || !Array.isArray(transferLog.topics) || !transferLog.topics[2]) {
+    return null;
+  }
+  return decodeTopicAddress(transferLog.topics[2]);
 }
 
 async function fetchErc20TransfersFromEtherscan(txid) {
@@ -383,6 +657,36 @@ function getSolanaFromTo(tx) {
       return { from, to };
     }
   }
+
+  // Fallback for SPL / parsed-missing variants: infer owners from token balances.
+  const meta = tx && tx.meta ? tx.meta : null;
+  const pre = Array.isArray(meta && meta.preTokenBalances) ? meta.preTokenBalances : [];
+  const post = Array.isArray(meta && meta.postTokenBalances) ? meta.postTokenBalances : [];
+  const preOwner = pre.find((b) => b && b.owner && String(b.owner).trim())?.owner || null;
+  const postOwner = post.find((b) => b && b.owner && String(b.owner).trim())?.owner || null;
+  if (preOwner || postOwner) {
+    return { from: preOwner, to: postOwner };
+  }
+
+  // Native fallback: pick first signer as from and first non-signer key as to.
+  const keys = Array.isArray(message && message.accountKeys) ? message.accountKeys : [];
+  if (keys.length) {
+    const mapped = keys.map((k) => {
+      if (typeof k === "string") {
+        return { pubkey: k, signer: false };
+      }
+      return {
+        pubkey: k && (k.pubkey || k.address || null),
+        signer: Boolean(k && (k.signer || k.isSigner))
+      };
+    });
+    const from = mapped.find((k) => k.signer && k.pubkey)?.pubkey || null;
+    const to = mapped.find((k) => !k.signer && k.pubkey)?.pubkey || null;
+    if (from || to) {
+      return { from, to };
+    }
+  }
+
   return { from: null, to: null };
 }
 
@@ -481,6 +785,7 @@ async function detectEvmTokenFromReceipt({ chainId, network, txid }) {
   if (!transferLog || !transferLog.address) {
     return null;
   }
+  const transferRecipient = decodeTopicAddress(transferLog.topics[2]) || null;
 
   const token = getKnownEvmTokenByContract(network, transferLog.address);
   let contractSymbol = token || (await fetchErc20SymbolFromContract({
@@ -494,11 +799,18 @@ async function detectEvmTokenFromReceipt({ chainId, network, txid }) {
     });
   }
 
-  if (!contractSymbol) return null;
+  if (!contractSymbol) {
+    return {
+      token: "UNKNOWN",
+      token_standard: network === "BSC" ? "BEP20" : "ERC20",
+      to: transferRecipient
+    };
+  }
 
   return {
     token: contractSymbol,
-    token_standard: network === "BSC" ? "BEP20" : "ERC20"
+    token_standard: network === "BSC" ? "BEP20" : "ERC20",
+    to: transferRecipient
   };
 }
 
@@ -516,19 +828,26 @@ async function detectEthereumTokenSimple(txid, tx) {
   // - Else if native value > 0 -> ETH (native)
   // - Else -> UNKNOWN (could be contract interaction)
   if (tx.to && String(tx.to).toLowerCase() === USDT_ETH_CONTRACT.toLowerCase()) {
+    const tokenFromReceipt = await detectEvmTokenFromReceipt({
+      chainId: 1,
+      network: "Ethereum",
+      txid
+    });
     return {
       token: "USDT",
-      token_standard: "ERC20"
+      token_standard: "ERC20",
+      to: (tokenFromReceipt && tokenFromReceipt.to) || tx.to || null
     };
   }
 
   const erc20Transfers = await fetchErc20TransfersFromEtherscan(txid);
-  const firstTransfer = erc20Transfers[0];
+  const firstTransfer = erc20Transfers.find((t) => pickTransferRecipient(t)) || erc20Transfers[0];
 
   if (firstTransfer && firstTransfer.tokenSymbol) {
     return {
       token: String(firstTransfer.tokenSymbol).toUpperCase(),
-      token_standard: "ERC20"
+      token_standard: "ERC20",
+      to: pickTransferRecipient(firstTransfer) || tx.to || null
     };
   }
 
@@ -570,7 +889,14 @@ async function resolveEthereum(txid) {
 
   if (tx) {
     const tokenDetection = await detectEthereumTokenSimple(txid, tx);
-    return normalizeEthereumResult(txid, tx, tokenDetection);
+    const receiptRecipient = await detectEvmTransferRecipientFromReceipt({
+      chainId: 1,
+      network: "Ethereum",
+      txid
+    });
+    const normalized = normalizeEthereumResult(txid, tx, tokenDetection);
+    normalized.to = receiptRecipient || normalized.to;
+    return normalized;
   }
 
   return normalizeEthereumResult(txid, null, null);
@@ -614,7 +940,7 @@ async function resolveBsc(txid) {
   }
 
   if (tx) {
-    const firstTransfer = transfers[0];
+    const firstTransfer = transfers.find((t) => pickTransferRecipient(t)) || transfers[0];
     if (firstTransfer && firstTransfer.tokenSymbol) {
       const normalized = normalizeEvmTokenSymbol(
         "BSC",
@@ -629,7 +955,7 @@ async function resolveBsc(txid) {
           token_standard: "BEP20",
           explorer_link: `https://bscscan.com/tx/${txid}`,
           from: tx.from || null,
-          to: tx.to || null
+          to: pickTransferRecipient(firstTransfer) || tx.to || null
         };
       }
     }
@@ -647,7 +973,7 @@ async function resolveBsc(txid) {
         token_standard: tokenFromReceipt.token_standard,
         explorer_link: `https://bscscan.com/tx/${txid}`,
         from: tx.from || null,
-        to: tx.to || null
+        to: tokenFromReceipt.to || tx.to || null
       };
     }
 
@@ -725,7 +1051,7 @@ async function resolvePolygon(txid) {
   }
 
   if (tx) {
-    const firstTransfer = transfers[0];
+    const firstTransfer = transfers.find((t) => pickTransferRecipient(t)) || transfers[0];
     if (firstTransfer && firstTransfer.tokenSymbol) {
       const normalized = normalizeEvmTokenSymbol(
         "Polygon",
@@ -740,7 +1066,7 @@ async function resolvePolygon(txid) {
           token_standard: "ERC20",
           explorer_link: `https://polygonscan.com/tx/${txid}`,
           from: tx.from || null,
-          to: tx.to || null
+          to: pickTransferRecipient(firstTransfer) || tx.to || null
         };
       }
     }
@@ -758,7 +1084,7 @@ async function resolvePolygon(txid) {
         token_standard: tokenFromReceipt.token_standard,
         explorer_link: `https://polygonscan.com/tx/${txid}`,
         from: tx.from || null,
-        to: tx.to || null
+        to: tokenFromReceipt.to || tx.to || null
       };
     }
 
@@ -810,7 +1136,7 @@ async function resolveTron(txid) {
 
   if (data && (data.hash || data.transactionHash || data.id)) {
     const trc20Transfers = Array.isArray(data.trc20TransferInfo) ? data.trc20TransferInfo : [];
-    const firstTransfer = trc20Transfers[0];
+    const firstTransfer = trc20Transfers.find((t) => pickTransferRecipient(t)) || trc20Transfers[0];
 
     if (firstTransfer) {
       const tokenSymbol =
@@ -825,7 +1151,7 @@ async function resolveTron(txid) {
         token_standard: "TRC20",
         explorer_link: `https://tronscan.org/#/transaction/${txid}`,
         from: data.ownerAddress || null,
-        to: data.toAddress || null
+        to: pickTransferRecipient(firstTransfer) || data.toAddress || null
       };
     }
 
@@ -901,7 +1227,7 @@ async function resolveOpbnb(txid) {
   }
 
   if (tx) {
-    const firstTransfer = transfers[0];
+    const firstTransfer = transfers.find((t) => pickTransferRecipient(t)) || transfers[0];
     if (firstTransfer && firstTransfer.tokenSymbol) {
       return {
         status: "FOUND",
@@ -910,7 +1236,24 @@ async function resolveOpbnb(txid) {
         token_standard: "BEP20",
         explorer_link: `https://opbnbscan.com/tx/${txid}`,
         from: tx.from || null,
-        to: tx.to || null
+        to: pickTransferRecipient(firstTransfer) || tx.to || null
+      };
+    }
+
+    const tokenFromReceipt = await detectEvmTokenFromReceipt({
+      chainId: 204,
+      network: "opBNB",
+      txid
+    });
+    if (tokenFromReceipt) {
+      return {
+        status: "FOUND",
+        network: "opBNB",
+        token: tokenFromReceipt.token,
+        token_standard: tokenFromReceipt.token_standard,
+        explorer_link: `https://opbnbscan.com/tx/${txid}`,
+        from: tx.from || null,
+        to: tokenFromReceipt.to || tx.to || null
       };
     }
 
@@ -958,34 +1301,6 @@ async function resolveTransaction(txid) {
   if (tron.status === "FOUND") return tron;
 
   return eth; // default to Ethereum NOT_FOUND shape
-}
-
-function matchPayment(expected, actual) {
-  if (!actual || actual.status !== "FOUND") {
-    return "tx_not_found";
-  }
-
-  if (actual.token === "BNB" || actual.network === "opBNB") {
-    return "funds_lost_wrong_asset";
-  }
-
-  if (expected.network !== actual.network) {
-    return "wrong_network";
-  }
-
-  if (expected.token !== actual.token) {
-    return "wrong_asset";
-  }
-
-  return "payment_valid";
-}
-
-function normalizeWalletForCompare(wallet) {
-  if (!wallet) {
-    return "";
-  }
-
-  return String(wallet).trim().toLowerCase();
 }
 
 function normalizeExpectedNetworkName(value) {
@@ -1470,7 +1785,7 @@ app.get("/ui", (req, res) => {
 
 // Realistic Zendesk-style POST endpoint (v1)
 // Input: { ticket_id, txid }
-app.post("/zendesk/payment-ticket", async (req, res) => {
+app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicketBody, async (req, res) => {
   const ticketId = req.body.ticket_id;
   const txid = req.body.txid;
 
@@ -1483,6 +1798,23 @@ app.post("/zendesk/payment-ticket", async (req, res) => {
   }
 
   try {
+    const existing = tickets[ticketId];
+    if (
+      existing &&
+      String(existing.txid || "") === String(txid) &&
+      (existing.resolver_status === "FOUND" || existing.resolver_status === "NOT_FOUND")
+    ) {
+      return res.json({
+        version: APP_VERSION,
+        status: "PAYMENT_TICKET_REPLAY",
+        ticket_id: ticketId,
+        saved_ticket_memory: existing,
+        idempotent: true,
+        next_action:
+          existing.match_status === "tx_not_found" ? "ask_user_for_correct_txid" : "ops_enter_confirmo_expected"
+      });
+    }
+
     const result = await resolveTransaction(txid);
 
     const stored = upsertTicket(ticketId);
@@ -1500,6 +1832,7 @@ app.post("/zendesk/payment-ticket", async (req, res) => {
     const matchStatus = result.status === "FOUND" ? "needs_confirmo_input" : "tx_not_found";
     stored.match_status = matchStatus;
     stored.needs_wallet = false;
+    saveTicketState(ticketId, stored);
 
     const tags =
       matchStatus === "tx_not_found"
@@ -1541,7 +1874,7 @@ app.post("/zendesk/payment-ticket", async (req, res) => {
 
 // Ops manual Confirmo input (v1)
 // Input: { ticket_id, confirmo_invoice_id, expected_asset_network, expected_wallet_address }
-app.post("/zendesk/confirmo-input", async (req, res) => {
+app.post("/zendesk/confirmo-input", requireInternalApiKey, validateConfirmoInputBody, async (req, res) => {
   const ticketId = req.body.ticket_id;
   const confirmoInvoiceId = req.body.confirmo_invoice_id;
   let expectedNetwork = req.body.expected_network;
@@ -1593,22 +1926,27 @@ app.post("/zendesk/confirmo-input", async (req, res) => {
   stored.expected_token = normalizeExpectedTokenName(expectedToken);
   stored.expected_wallet_address = String(expectedWalletAddress);
 
-  const walletMatches =
-    normalizeWalletForCompare(stored.expected_wallet_address) ===
-    normalizeWalletForCompare(stored.receiver);
   const expected = { network: stored.expected_network, token: stored.expected_token };
   const actual = {
     status: stored.resolver_status,
     network: stored.actual_network,
     token: stored.actual_token
   };
-  const matchStatus = walletMatches ? matchPayment(expected, actual) : "wrong_wallet_address";
+  const matchResult = computeMatchDetails({
+    expected,
+    actual,
+    expectedWallet: stored.expected_wallet_address,
+    actualReceiver: stored.receiver
+  });
+  const matchStatus = matchResult.status;
   stored.match_status = matchStatus;
-  stored.needs_wallet =
-    matchStatus === "wrong_network" ||
-    matchStatus === "wrong_asset" ||
-    matchStatus === "wrong_wallet_address";
+  stored.wallet_match = matchResult.wallet_match;
+  stored.network_match = matchResult.network_match;
+  stored.token_match = matchResult.token_match;
+  stored.asset_network_match = matchResult.asset_network_match;
+  stored.needs_wallet = !matchResult.wallet_match || !matchResult.asset_network_match;
   stored.updated_at = new Date().toISOString();
+  saveTicketState(ticketId, stored);
 
   const tags = getZendeskTags(matchStatus).concat(["crypto_confirmo_expected_received"]);
   const internalNote = buildConfirmoMatchInternalNote(stored);
@@ -1637,6 +1975,7 @@ app.post("/zendesk/confirmo-input", async (req, res) => {
     ticket_id: ticketId,
     saved_ticket_memory: stored,
     match_status: matchStatus,
+    match_result: matchResult,
     zendesk_update,
     next_action: stored.needs_wallet
       ? "wait_for_wallet_reply"
@@ -1648,7 +1987,7 @@ app.post("/zendesk/confirmo-input", async (req, res) => {
 
 // Wallet reply from user (v1)
 // Input: { ticket_id, message } OR { ticket_id, refund_wallet }
-app.post("/zendesk/wallet-reply", async (req, res) => {
+app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody, async (req, res) => {
   const ticketId = req.body.ticket_id;
   const message = req.body.message;
   const refundWallet = req.body.refund_wallet;
@@ -1717,6 +2056,7 @@ app.post("/zendesk/wallet-reply", async (req, res) => {
   stored.confirmo_ready = walletReadyForRecovery; // v1: if wallet ok, ready for ops to submit
   stored.confirmo_recovery_payload = walletReadyForRecovery ? buildConfirmoRecoveryPayload(stored) : null;
   stored.updated_at = new Date().toISOString();
+  saveTicketState(ticketId, stored);
 
   const tags = walletReadyForRecovery
     ? ["crypto_wallet_valid", "crypto_confirmo_payload_ready", "crypto_ops_review_needed"]
@@ -1748,7 +2088,7 @@ app.post("/zendesk/wallet-reply", async (req, res) => {
   });
 });
 
-app.get("/simulate-zendesk-ticket", async (req, res) => {
+app.get("/simulate-zendesk-ticket", blockInProduction, async (req, res) => {
   const ticketId = req.query.ticket_id;
   const txid = req.query.txid;
   const expectedNetworkQuery = req.query.expected_network;
@@ -1798,7 +2138,7 @@ app.get("/simulate-zendesk-ticket", async (req, res) => {
       const internalNote = getZendeskInternalNote(matchStatus);
       const emailToUser = getEmailToUser(matchStatus);
 
-      tickets[ticketId] = {
+      const nextTicket = {
         ticket_id: ticketId,
         txid: txid,
         actual_network: "Ethereum",
@@ -1814,6 +2154,7 @@ app.get("/simulate-zendesk-ticket", async (req, res) => {
         confirmo_ready: false,
         created_at: new Date().toISOString()
       };
+      saveTicketState(ticketId, nextTicket);
 
       return res.json({
         version: APP_VERSION,
@@ -1842,7 +2183,7 @@ app.get("/simulate-zendesk-ticket", async (req, res) => {
       });
     }
 
-    tickets[ticketId] = {
+    const nextTicket = {
       ticket_id: ticketId,
       txid: txid,
       actual_network: "Ethereum",
@@ -1855,6 +2196,7 @@ app.get("/simulate-zendesk-ticket", async (req, res) => {
       confirmo_ready: false,
       created_at: new Date().toISOString()
     };
+    saveTicketState(ticketId, nextTicket);
 
     return res.json({
       version: APP_VERSION,
@@ -1885,7 +2227,7 @@ app.get("/simulate-zendesk-ticket", async (req, res) => {
   }
 });
 
-app.get("/simulate-zendesk-wallet-reply", async (req, res) => {
+app.get("/simulate-zendesk-wallet-reply", blockInProduction, async (req, res) => {
   const ticketId = req.query.ticket_id;
   const message = req.query.message;
 
@@ -1977,6 +2319,7 @@ app.get("/simulate-zendesk-wallet-reply", async (req, res) => {
     storedTicket.ops_approved = false;
     storedTicket.confirmo_ready = false;
     storedTicket.updated_at = new Date().toISOString();
+    saveTicketState(ticketId, storedTicket);
 
     return res.json({
       version: APP_VERSION,
@@ -2009,7 +2352,7 @@ app.get("/simulate-zendesk-wallet-reply", async (req, res) => {
   }
 });
 
-app.get("/simulate-ops-approval", (req, res) => {
+app.get("/simulate-ops-approval", blockInProduction, (req, res) => {
   const ticketId = req.query.ticket_id;
   const approvedBy = req.query.approved_by || "ops_user";
 
@@ -2052,6 +2395,7 @@ app.get("/simulate-ops-approval", (req, res) => {
   storedTicket.confirmo_ready = true;
   storedTicket.approved_by = approvedBy;
   storedTicket.approved_at = new Date().toISOString();
+  saveTicketState(ticketId, storedTicket);
 
   return res.json({
     version: APP_VERSION,
@@ -2065,7 +2409,7 @@ app.get("/simulate-ops-approval", (req, res) => {
   });
 });
 
-app.get("/simulate-confirmo-recovery", (req, res) => {
+app.get("/simulate-confirmo-recovery", blockInProduction, (req, res) => {
   const ticketId = req.query.ticket_id;
 
   if (!ticketId) {
@@ -2119,6 +2463,7 @@ app.get("/simulate-confirmo-recovery", (req, res) => {
   storedTicket.confirmo_recovery_simulated = true;
   storedTicket.confirmo_recovery_request = recoveryRequest;
   storedTicket.confirmo_simulated_at = new Date().toISOString();
+  saveTicketState(ticketId, storedTicket);
 
   return res.json({
     version: APP_VERSION,
@@ -2133,14 +2478,56 @@ app.get("/simulate-confirmo-recovery", (req, res) => {
   });
 });
 
-app.get("/debug-tickets", (req, res) => {
+app.get("/debug-tickets", blockInProduction, requireInternalApiKey, (req, res) => {
   res.json({
     version: APP_VERSION,
     tickets: tickets
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Resolver running on http://localhost:${PORT}`);
-  console.log(`Version: ${APP_VERSION}`);
+app.get("/healthz", (req, res) => {
+  res.json({
+    status: "ok",
+    version: APP_VERSION,
+    env: NODE_ENV
+  });
 });
+
+function validateRequiredEnv() {
+  const missing = [];
+  if (!ETHERSCAN_API_KEY) {
+    missing.push("ETHERSCAN_API_KEY");
+  }
+  if (!INTERNAL_API_KEY) {
+    missing.push("INTERNAL_API_KEY");
+  }
+  return missing;
+}
+
+const missingEnv = validateRequiredEnv();
+if (missingEnv.length > 0) {
+  const msg = `[startup] Missing required env vars: ${missingEnv.join(", ")}`;
+  if (IS_PRODUCTION) {
+    throw new Error(`${msg}. Refusing to start in production.`);
+  }
+  logEvent("info", "startup_missing_env", { missing_env: missingEnv });
+}
+
+function startServer() {
+  return app.listen(PORT, () => {
+    logEvent("info", "server_started", {
+      url: `http://localhost:${PORT}`,
+      version: APP_VERSION,
+      environment: NODE_ENV
+    });
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  app,
+  startServer
+};
