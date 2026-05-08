@@ -304,21 +304,12 @@ body {
   gap: 14px;
 }
 
-.resultSummary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  list-style: none;
+.walletSplit {
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 1fr);
 }
 
-.resultSummary::-webkit-details-marker {
-  display: none;
-}
-
-.resultToggleHint {
-  font-size: 12px;
-  color: var(--muted);
+.walletCard {
+  grid-column: 1 / -1;
 }
 
 .pre {
@@ -376,6 +367,23 @@ body {
   margin-top: 12px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.footerRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.footerJson {
+  margin-top: 0;
+  min-width: 320px;
+}
+
+.footerJson .pre {
+  min-height: 120px;
+  max-height: 280px;
 }
 
 .link {
@@ -447,9 +455,18 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .flowGrid,
+  .walletSplit {
+    grid-template-columns: 1fr;
+  }
+
   .grid,
   .split {
     grid-template-columns: 1fr;
+  }
+
+  .footerRow {
+    flex-direction: column;
   }
 
   .header {

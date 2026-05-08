@@ -122,9 +122,9 @@
           <div class="pre pre-summary" id="confirmoStepOut">-</div>
         </section>
 
-        <section class="card fade-up delay-2">
+        <section class="card fade-up delay-2 walletCard">
           <div class="cardTitle">3) Wallet reply</div>
-          <div class="split">
+          <div class="split walletSplit">
             <div>
               <div class="row">
                 <label class="label" for="ticketId2">Ticket ID</label>
@@ -155,33 +155,16 @@
         </section>
       </div>
 
-      <section class="card fade-up delay-2">
-        <details id="resultSectionToggle" open>
-          <summary class="resultSummary">
-            <span class="cardTitle">Result</span>
-            <span class="resultToggleHint">Hide/Unhide</span>
-          </summary>
-          <div class="split">
-          <div>
-            <div class="label">Request</div>
-            <pre class="pre" id="reqOut">-</pre>
-          </div>
-          <div>
-            <div class="label">Response</div>
-            <div class="pre pre-summary" id="resSummary">-</div>
-            <details class="jsonDetails">
-              <summary>Show full response JSON</summary>
-              <pre class="pre" id="resOut">-</pre>
-            </details>
-          </div>
-          </div>
-        </details>
-      </section>
-
       <footer class="footer fade-up delay-2">
-        <div>
-          Open:
-          <a class="link" href="/debug-tickets" target="_blank" rel="noreferrer">/debug-tickets</a>
+        <div class="footerRow">
+          <div>
+            Open:
+            <a class="link" href="/debug-tickets" target="_blank" rel="noreferrer">/debug-tickets</a>
+          </div>
+          <details class="jsonDetails footerJson">
+            <summary>Show full response JSON</summary>
+            <pre class="pre" id="resOut">-</pre>
+          </details>
         </div>
       </footer>
     </div>

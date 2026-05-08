@@ -197,9 +197,12 @@ async function pingServer() {
 }
 
 function setOutputs(req, res) {
-  $("reqOut").textContent = req ? pretty(req) : "-";
-  $("resSummary").innerHTML = res ? toSummaryLines(res).html : "-";
-  $("resOut").textContent = res ? pretty(res) : "-";
+  const reqOut = $("reqOut");
+  const resSummary = $("resSummary");
+  const resOut = $("resOut");
+  if (reqOut) reqOut.textContent = req ? pretty(req) : "-";
+  if (resSummary) resSummary.innerHTML = res ? toSummaryLines(res).html : "-";
+  if (resOut) resOut.textContent = res ? pretty(res) : "-";
 }
 
 function setConfirmoStepOutput(res) {
