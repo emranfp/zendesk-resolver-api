@@ -2355,6 +2355,32 @@ app.get("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicketB
   }
 });
 
+app.post("/api/resolve-transaction", requireInternalApiKey, async (req, res) => {
+  try {
+    const txid = req.body && req.body.txid ? String(req.body.txid).trim() : "";
+    if (!hasNonEmptyString(txid)) {
+      return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing txid" });
+    }
+    const result = await resolveTransaction(txid);
+    if (!result || result.status !== "FOUND") {
+      return res.json({ network: null, token: null, amount: null, to_address: null, txid: String(txid || "") });
+    }
+    return res.json({
+      network: result.network || null,
+      token: result.token || null,
+      amount: result.amount || null,
+      to_address: result.to || null,
+      txid: String(txid || "")
+    });
+  } catch (error) {
+    return res.status(500).json({
+      version: APP_VERSION,
+      status: "ERROR",
+      message: error && error.message ? error.message : "Internal server error"
+    });
+  }
+});
+
 // Ops manual Confirmo input (v1)
 // Input: { ticket_id, confirmo_invoice_id, expected_asset_network, expected_wallet_address }
 app.post("/zendesk/confirmo-input", requireInternalApiKey, validateConfirmoInputBody, async (req, res) => {

@@ -20,6 +20,55 @@ function toSummaryLines(res) {
     return { html: "No response yet." };
   }
 
+  const isFlatResolve =
+    Object.prototype.hasOwnProperty.call(res, "network") &&
+    Object.prototype.hasOwnProperty.call(res, "token") &&
+    Object.prototype.hasOwnProperty.call(res, "txid");
+
+  if (isFlatResolve) {
+    const val = (v) => (v === undefined || v === null || v === "" ? "-" : String(v));
+    const network = val(res.network);
+    const token = val(res.token);
+    const paidToWallet = val(res.to_address);
+    const txid = val(res.txid);
+    const amount = val(res.amount);
+    const foundInBlockchain = network !== "-" && token !== "-";
+    const status = foundInBlockchain ? "SUCCESS" : "ERROR";
+    let explorerLink = "-";
+    if (foundInBlockchain && txid !== "-") {
+      if (network === "Ethereum") explorerLink = `https://etherscan.io/tx/${txid}`;
+      else if (network === "Polygon") explorerLink = `https://polygonscan.com/tx/${txid}`;
+      else if (network === "BSC") explorerLink = `https://bscscan.com/tx/${txid}`;
+      else if (network === "Tron") explorerLink = `https://tronscan.org/#/transaction/${txid}`;
+      else if (network === "Solana") explorerLink = `https://solscan.io/tx/${txid}`;
+      else if (network === "opBNB") explorerLink = `https://opbnbscan.com/tx/${txid}`;
+    }
+
+    const line = (label, value, valueClass = "summary-value") =>
+      `<div><span class="summary-label">${escapeHtml(label)}:</span> <span class="${valueClass}">${escapeHtml(value)}</span></div>`;
+
+    const explorerHtml =
+      explorerLink === "-"
+        ? line("Explorer Link", "-")
+        : `<div><span class="summary-label">Explorer Link:</span> <span class="summary-value"><a class="link" href="${escapeHtml(
+            explorerLink
+          )}" target="_blank" rel="noreferrer">${escapeHtml(explorerLink)}</a></span></div>`;
+
+    return {
+      html: [
+        line("Status", status),
+        line("Ticket ID", "-"),
+        line("Found In Blockchain", foundInBlockchain ? "Yes" : "No", foundInBlockchain ? "summary-yes" : "summary-no"),
+        line("Actual Network", network),
+        line("Actual Token", token),
+        line("Amount", amount),
+        line("Wallet Address Paid To", paidToWallet),
+        explorerHtml,
+        line("Next Action", foundInBlockchain ? "review_result" : "txn_not_exist -> ask_user_for_correct_txn_hash")
+      ].join("")
+    };
+  }
+
   const memory = res.saved_ticket_memory || {};
   const val = (v) => (v === undefined || v === null || v === "" ? "-" : String(v));
   const explorerLink = memory.explorer_link || (res.resolver_result && res.resolver_result.explorer_link);
@@ -224,11 +273,8 @@ function setWalletStepOutput(res) {
 }
 
 async function runResolve(ticketId, txid) {
-  const url = `/zendesk/payment-ticket`;
+  const url = `/api/resolve-transaction`;
   const body = { txid };
-  if (ticketId) {
-    body.ticket_id = ticketId;
-  }
 
   setOutputs({ method: "POST", url, body }, null);
 
