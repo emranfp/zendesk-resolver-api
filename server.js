@@ -781,6 +781,18 @@ async function fetchUsdPriceForToken(network, token) {
     }
   }
 
+  // Source 4: Etherscan stats endpoint (ETH only; same provider already used by resolver)
+  if (t === "ETH") {
+    const ethPriceUrl = `https://api.etherscan.io/api?module=stats&action=ethprice&apikey=${ETHERSCAN_API_KEY}`;
+    try {
+      const response = await http.get(ethPriceUrl, AXIOS_HTTP_OPTIONS);
+      const ethusd = response.data && response.data.result ? Number(response.data.result.ethusd) : null;
+      if (Number.isFinite(ethusd) && ethusd > 0) return ethusd;
+    } catch (error) {
+      // no more fallbacks
+    }
+  }
+
   return null;
 }
 
