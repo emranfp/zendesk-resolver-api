@@ -302,6 +302,7 @@ function createTicketState(ticketId) {
     actual_network: null,
     actual_token: null,
     actual_amount: null,
+    actual_amount_usd: null,
     token_standard: null,
     explorer_link: null,
     sender: null,
@@ -706,6 +707,51 @@ function detectSolanaToken(tx) {
   }
 
   return { token: "UNKNOWN", token_standard: "UNKNOWN", amount: null };
+}
+
+function toNumberAmount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatUsd(value) {
+  if (!Number.isFinite(value)) return null;
+  return value.toFixed(2);
+}
+
+async function fetchUsdPriceForToken(network, token) {
+  const t = String(token || "").toUpperCase();
+  const n = String(network || "");
+  if (t === "USDT" || t === "USDC") {
+    return 1;
+  }
+
+  const coinIdMap = {
+    ETH: "ethereum",
+    BNB: "binancecoin",
+    MATIC: "matic-network",
+    SOL: "solana",
+    TRX: "tron"
+  };
+  const id = coinIdMap[t];
+  if (!id) return null;
+
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`;
+  try {
+    const response = await http.get(url, AXIOS_HTTP_OPTIONS);
+    const usd = response.data && response.data[id] ? Number(response.data[id].usd) : null;
+    return Number.isFinite(usd) ? usd : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function computeAmountUsd({ network, token, amount }) {
+  const amt = toNumberAmount(amount);
+  if (!Number.isFinite(amt)) return null;
+  const px = await fetchUsdPriceForToken(network, token);
+  if (!Number.isFinite(px)) return null;
+  return formatUsd(amt * px);
 }
 
 function getKnownTokenDecimalsByContract(network, contractAddress) {
@@ -1619,6 +1665,7 @@ function buildPaymentTicketInternalNote(ticketState) {
     `- Network: ${ticketState.actual_network || "UNKNOWN"}`,
     `- Asset: ${ticketState.actual_token || "UNKNOWN"}`,
     `- Amount: ${ticketState.actual_amount || "UNKNOWN"}`,
+    `- Amount (USD): ${ticketState.actual_amount_usd || "UNKNOWN"}`,
     `- Paid To: ${ticketState.receiver || "UNKNOWN"}`,
     `- TXID: ${ticketState.txid || "UNKNOWN"}`,
     `- Status: ${ticketState.resolver_status || "UNKNOWN"}`,
@@ -1641,6 +1688,7 @@ function buildConfirmoMatchInternalNote(ticketState) {
     `- actual_network: ${ticketState.actual_network || "UNKNOWN"}`,
     `- actual_token: ${ticketState.actual_token || "UNKNOWN"}`,
     `- actual_amount: ${ticketState.actual_amount || "UNKNOWN"}`,
+    `- actual_amount_usd: ${ticketState.actual_amount_usd || "UNKNOWN"}`,
     `- actual_paid_to_wallet: ${ticketState.receiver || "UNKNOWN"}`,
     `- token_standard: ${ticketState.token_standard || "UNKNOWN"}`,
     `- explorer: ${ticketState.explorer_link || "N/A"}`,
@@ -1661,6 +1709,7 @@ function buildConfirmoRecoveryPayload(ticketState) {
     actual_network: ticketState.actual_network,
     actual_token: ticketState.actual_token,
     actual_amount: ticketState.actual_amount,
+    actual_amount_usd: ticketState.actual_amount_usd,
     actual_paid_to_wallet: ticketState.receiver,
     refund_wallet: ticketState.refund_wallet,
     created_at: new Date().toISOString()
@@ -1974,6 +2023,11 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
     }
 
     const result = await resolveTransaction(txid);
+    const amountUsd = await computeAmountUsd({
+      network: result.network,
+      token: result.token,
+      amount: result.amount
+    });
 
     const stored = upsertTicket(ticketId);
     stored.txid = txid;
@@ -1981,6 +2035,7 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
     stored.actual_network = result.network;
     stored.actual_token = result.token;
     stored.actual_amount = result.amount || null;
+    stored.actual_amount_usd = amountUsd;
     stored.token_standard = result.token_standard;
     stored.explorer_link = result.explorer_link;
     stored.sender = result.from;
@@ -2013,6 +2068,7 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
       ticket_id: ticketId,
       saved_ticket_memory: stored,
       resolver_result: result,
+      resolver_amount_usd: amountUsd,
       zendesk_update,
       next_action:
         matchStatus === "tx_not_found" ? "ask_user_for_correct_txid" : "ops_enter_confirmo_expected"
