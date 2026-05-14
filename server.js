@@ -859,6 +859,8 @@ async function detectEthereumTokenSimple(txid, tx) {
   // - Else if native value > 0 -> ETH (native)
   // - Else -> UNKNOWN (could be contract interaction)
   if (tx.to && String(tx.to).toLowerCase() === USDT_ETH_CONTRACT.toLowerCase()) {
+    const directTransfers = await fetchErc20TransfersFromEtherscan(txid);
+    const directTransfer = directTransfers.find((t) => pickTransferRecipient(t)) || directTransfers[0] || null;
     const tokenFromReceipt = await detectEvmTokenFromReceipt({
       chainId: 1,
       network: "Ethereum",
@@ -868,7 +870,7 @@ async function detectEthereumTokenSimple(txid, tx) {
       token: "USDT",
       token_standard: "ERC20",
       to: (tokenFromReceipt && tokenFromReceipt.to) || tx.to || null,
-      amount: formatUnitsFromBase(tx.value, 18)
+      amount: extractAmountFromTransfer(directTransfer)
     };
   }
 
