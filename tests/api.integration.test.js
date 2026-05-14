@@ -72,6 +72,7 @@ async function readJson(response) {
 }
 
 async function main() {
+  const buildBearer = (key) => `Bearer ${key}`;
   await run("healthz returns ok", async () => {
     await withServer(
       { NODE_ENV: "development", INTERNAL_API_KEY: "k1", ETHERSCAN_API_KEY: "x" },
@@ -108,7 +109,7 @@ async function main() {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            authorization: "Bearer FUNDINGPIPS123"
+            authorization: buildBearer("k1")
           },
           body: JSON.stringify({ ticket_id: "t1" })
         });
@@ -128,7 +129,7 @@ async function main() {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            authorization: "Bearer FUNDINGPIPS123"
+            authorization: buildBearer("k1")
           },
           body: JSON.stringify({
             ticket_id: "t1",
@@ -165,7 +166,7 @@ async function main() {
         assert.equal(noKey.status, 401);
 
         const withKey = await fetch(`${base}/debug-tickets`, {
-          headers: { authorization: "Bearer FUNDINGPIPS123" }
+          headers: { authorization: buildBearer("k1") }
         });
         assert.equal(withKey.status, 200);
       }
@@ -191,7 +192,7 @@ async function main() {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            authorization: "Bearer FUNDINGPIPS123"
+            authorization: buildBearer("k1")
           },
           body: JSON.stringify({ ticket_id: "replay1", txid: "0xabc123" })
         });

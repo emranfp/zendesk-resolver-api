@@ -84,8 +84,7 @@ const INTERNAL_API_KEY = String(process.env.INTERNAL_API_KEY || "");
 const APP_SECRET = String(process.env.APP_SECRET || "");
 const ZENDESK_ALLOWED_ORIGIN = "https://fundingpips41501744038783.zendesk.com";
 const RESOLVER_FRONTEND_ORIGIN = "https://zendesk-resolver-api.onrender.com";
-const ZENDESK_APP_BEARER_KEY = "FUNDINGPIPS123";
-const STANDALONE_HRC_KEY = "HRC7KM2ZI6VIJYN82QUA5PXDB32IJV2F34";
+const ZENDESK_APP_BEARER_KEY = String(APP_SECRET || INTERNAL_API_KEY || "");
 
 const USDT_ETH_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 const USDC_ETH_CONTRACT = "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
@@ -98,6 +97,7 @@ const ERC20_TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 // Resolver must use this key for chain explorer lookups (set in environment).
 const LOOKUP_API_KEY = String(process.env.LOOKUP_API_KEY || "");
+const STANDALONE_HRC_KEY = LOOKUP_API_KEY;
 const ETHERSCAN_API_KEY = LOOKUP_API_KEY;
 const BSCSCAN_API_KEY = LOOKUP_API_KEY;
 const POLYGONSCAN_API_KEY = LOOKUP_API_KEY;
@@ -236,8 +236,7 @@ function requireInternalApiKey(req, res, next) {
     logEvent("error", "auth_failed_invalid_bearer", {
       received_x_api_key: apiKeyHeader || null,
       received_authorization: authHeader || null,
-      expected_format:
-        "Authorization: Bearer FUNDINGPIPS123 OR x-api-key: HRC7KM2ZI6VIJYN82QUA5PXDB32IJV2F34"
+      expected_format: "Authorization: Bearer <APP_SECRET|INTERNAL_API_KEY> OR x-api-key: <LOOKUP_API_KEY>"
     });
     return res.status(401).json({
       status: "UNAUTHORIZED",
