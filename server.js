@@ -689,11 +689,47 @@ function detectSolanaToken(tx) {
     return best > 0 ? String(best) : null;
   }
 
+  function pickAmountFromParsedInstructions(mint) {
+    const message = tx && tx.transaction && tx.transaction.message ? tx.transaction.message : null;
+    const instructions = Array.isArray(message && message.instructions) ? message.instructions : [];
+    for (const ix of instructions) {
+      const parsed = ix && ix.parsed ? ix.parsed : null;
+      const info = parsed && parsed.info ? parsed.info : null;
+      if (!parsed || !info) continue;
+      const ixMint = String(info.mint || "");
+      if (ixMint && ixMint !== mint) continue;
+
+      const tokenAmountObj = info.tokenAmount || null;
+      if (tokenAmountObj && tokenAmountObj.uiAmountString) {
+        const ui = String(tokenAmountObj.uiAmountString).trim();
+        if (ui && ui !== "0") return ui;
+      }
+      if (tokenAmountObj && tokenAmountObj.amount && Number.isFinite(Number(tokenAmountObj.decimals))) {
+        const amt = formatUnitsFromBase(String(tokenAmountObj.amount), Number(tokenAmountObj.decimals));
+        if (amt && amt !== "0") return amt;
+      }
+
+      if (typeof info.amount !== "undefined") {
+        if (typeof info.decimals !== "undefined" && Number.isFinite(Number(info.decimals))) {
+          const amt = formatUnitsFromBase(String(info.amount), Number(info.decimals));
+          if (amt && amt !== "0") return amt;
+        }
+        const rawAmt = String(info.amount).trim();
+        if (rawAmt && rawAmt !== "0") return rawAmt;
+      }
+    }
+    return null;
+  }
+
   if (mintSet.has(SOLANA_USDT_MINT)) {
-    return { token: "USDT", token_standard: "SPL", amount: pickLargestDeltaForMint(SOLANA_USDT_MINT) };
+    const amount =
+      pickLargestDeltaForMint(SOLANA_USDT_MINT) || pickAmountFromParsedInstructions(SOLANA_USDT_MINT);
+    return { token: "USDT", token_standard: "SPL", amount: amount || null };
   }
   if (mintSet.has(SOLANA_USDC_MINT)) {
-    return { token: "USDC", token_standard: "SPL", amount: pickLargestDeltaForMint(SOLANA_USDC_MINT) };
+    const amount =
+      pickLargestDeltaForMint(SOLANA_USDC_MINT) || pickAmountFromParsedInstructions(SOLANA_USDC_MINT);
+    return { token: "USDC", token_standard: "SPL", amount: amount || null };
   }
 
   const message = tx && tx.transaction && tx.transaction.message ? tx.transaction.message : null;
@@ -717,6 +753,8 @@ function toNumberAmount(value) {
 
 function formatUsd(value) {
   if (!Number.isFinite(value)) return null;
+  if (value === 0) return "0.00";
+  if (value > 0 && value < 0.01) return value.toFixed(6);
   return value.toFixed(2);
 }
 
