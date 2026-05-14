@@ -1548,14 +1548,15 @@ function getEmailToUser(matchStatus) {
 
 function buildPaymentTicketInternalNote(ticketState) {
   return [
-    "Auto Resolver Result:",
-    `- txid: ${ticketState.txid}`,
-    `- resolver_status: ${ticketState.resolver_status}`,
-    `- actual_network: ${ticketState.actual_network || "UNKNOWN"}`,
-    `- actual_token: ${ticketState.actual_token || "UNKNOWN"}`,
-    `- actual_amount: ${ticketState.actual_amount || "UNKNOWN"}`,
-    `- token_standard: ${ticketState.token_standard || "UNKNOWN"}`,
-    `- explorer: ${ticketState.explorer_link || "N/A"}`,
+    `:white_check_mark: Blockchain Scan Result`,
+    `- Network: ${ticketState.actual_network || "UNKNOWN"}`,
+    `- Asset: ${ticketState.actual_token || "UNKNOWN"}`,
+    `- Amount: ${ticketState.actual_amount || "UNKNOWN"}`,
+    `- Paid To: ${ticketState.receiver || "UNKNOWN"}`,
+    `- TXID: ${ticketState.txid || "UNKNOWN"}`,
+    `- Status: ${ticketState.resolver_status || "UNKNOWN"}`,
+    `- Token Standard: ${ticketState.token_standard || "UNKNOWN"}`,
+    `- Explorer: ${ticketState.explorer_link || "N/A"}`,
     "",
     "Next step: Ops should fill Confirmo expected fields (invoice id, expected network, expected asset, expected wallet address)."
   ].join("\n");
