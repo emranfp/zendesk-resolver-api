@@ -273,8 +273,12 @@ function setWalletStepOutput(res) {
 }
 
 async function runResolve(ticketId, txid) {
-  const url = `/api/resolve-transaction`;
+  const useZendeskFlow = Boolean(ticketId && ticketId.trim());
+  const url = useZendeskFlow ? `/zendesk/payment-ticket` : `/api/resolve-transaction`;
   const body = { txid };
+  if (useZendeskFlow) {
+    body.ticket_id = ticketId.trim();
+  }
 
   setOutputs({ method: "POST", url, body }, null);
 
