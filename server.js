@@ -734,16 +734,54 @@ async function fetchUsdPriceForToken(network, token) {
     TRX: "tron"
   };
   const id = coinIdMap[t];
-  if (!id) return null;
+  const symbolMap = {
+    ETH: "ETH",
+    BNB: "BNB",
+    MATIC: "MATIC",
+    SOL: "SOL",
+    TRX: "TRX"
+  };
+  const symbol = symbolMap[t];
+  if (!id && !symbol) return null;
 
-  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`;
-  try {
-    const response = await http.get(url, AXIOS_HTTP_OPTIONS);
-    const usd = response.data && response.data[id] ? Number(response.data[id].usd) : null;
-    return Number.isFinite(usd) ? usd : null;
-  } catch (error) {
-    return null;
+  // Source 1: CoinGecko
+  if (id) {
+    const cgUrl = `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`;
+    try {
+      const response = await http.get(cgUrl, AXIOS_HTTP_OPTIONS);
+      const usd = response.data && response.data[id] ? Number(response.data[id].usd) : null;
+      if (Number.isFinite(usd) && usd > 0) return usd;
+    } catch (error) {
+      // fallback below
+    }
   }
+
+  // Source 2: CryptoCompare
+  if (symbol) {
+    const ccUrl = `https://min-api.cryptocompare.com/data/price?fsym=${symbol}&tsyms=USD`;
+    try {
+      const response = await http.get(ccUrl, AXIOS_HTTP_OPTIONS);
+      const usd = response.data ? Number(response.data.USD) : null;
+      if (Number.isFinite(usd) && usd > 0) return usd;
+    } catch (error) {
+      // fallback below
+    }
+  }
+
+  // Source 3: Binance ticker (USDT proxy for USD)
+  if (symbol) {
+    const pair = `${symbol}USDT`;
+    const binanceUrl = `https://api.binance.com/api/v3/ticker/price?symbol=${pair}`;
+    try {
+      const response = await http.get(binanceUrl, AXIOS_HTTP_OPTIONS);
+      const usd = response.data ? Number(response.data.price) : null;
+      if (Number.isFinite(usd) && usd > 0) return usd;
+    } catch (error) {
+      // no more fallbacks
+    }
+  }
+
+  return null;
 }
 
 async function computeAmountUsd({ network, token, amount }) {
