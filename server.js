@@ -300,6 +300,7 @@ function createTicketState(ticketId) {
     // Actual (from blockchain resolver)
     actual_network: null,
     actual_token: null,
+    actual_amount: null,
     token_standard: null,
     explorer_link: null,
     sender: null,
@@ -337,6 +338,34 @@ function upsertTicket(ticketId) {
   return tickets[ticketId];
 }
 
+function formatUnitsFromBase(valueLike, decimals) {
+  try {
+    if (valueLike === null || valueLike === undefined) return null;
+    const raw = String(valueLike).trim();
+    if (!raw) return null;
+    const base = raw.startsWith("0x") || raw.startsWith("0X") ? BigInt(raw) : BigInt(raw.replace(/[^\d-]/g, ""));
+    const scale = Number.isFinite(Number(decimals)) ? Number(decimals) : 0;
+    if (!Number.isInteger(scale) || scale < 0) return base.toString();
+    const neg = base < 0n;
+    const abs = neg ? -base : base;
+    const div = 10n ** BigInt(scale);
+    const whole = abs / div;
+    const frac = abs % div;
+    if (frac === 0n) return `${neg ? "-" : ""}${whole.toString()}`;
+    const fracStr = frac.toString().padStart(scale, "0").replace(/0+$/, "");
+    return `${neg ? "-" : ""}${whole.toString()}.${fracStr}`;
+  } catch (error) {
+    return null;
+  }
+}
+
+function extractAmountFromTransfer(transfer) {
+  if (!transfer || typeof transfer !== "object") return null;
+  const raw = transfer.value ?? transfer.amount ?? transfer.quant ?? null;
+  const decimals = transfer.tokenDecimal ?? transfer.token_decimals ?? transfer.decimals ?? 0;
+  return formatUnitsFromBase(raw, decimals);
+}
+
 function normalizeEthereumResult(txid, tx, tokenDetection) {
   if (!tx) {
     return {
@@ -346,7 +375,8 @@ function normalizeEthereumResult(txid, tx, tokenDetection) {
       token_standard: null,
       explorer_link: `https://etherscan.io/tx/${txid}`,
       from: null,
-      to: null
+      to: null,
+      amount: null
     };
   }
 
@@ -357,7 +387,8 @@ function normalizeEthereumResult(txid, tx, tokenDetection) {
     token_standard: tokenDetection?.token_standard || "UNKNOWN",
     explorer_link: `https://etherscan.io/tx/${txid}`,
     from: tx.from || null,
-    to: tokenDetection?.to || tx.to || null
+    to: tokenDetection?.to || tx.to || null,
+    amount: tokenDetection?.amount || formatUnitsFromBase(tx.value, 18)
   };
 }
 
@@ -836,7 +867,8 @@ async function detectEthereumTokenSimple(txid, tx) {
     return {
       token: "USDT",
       token_standard: "ERC20",
-      to: (tokenFromReceipt && tokenFromReceipt.to) || tx.to || null
+      to: (tokenFromReceipt && tokenFromReceipt.to) || tx.to || null,
+      amount: formatUnitsFromBase(tx.value, 18)
     };
   }
 
@@ -847,7 +879,8 @@ async function detectEthereumTokenSimple(txid, tx) {
     return {
       token: String(firstTransfer.tokenSymbol).toUpperCase(),
       token_standard: "ERC20",
-      to: pickTransferRecipient(firstTransfer) || tx.to || null
+      to: pickTransferRecipient(firstTransfer) || tx.to || null,
+      amount: extractAmountFromTransfer(firstTransfer)
     };
   }
 
@@ -863,7 +896,8 @@ async function detectEthereumTokenSimple(txid, tx) {
   if (tx.value && tx.value !== "0x0" && tx.value !== "0") {
     return {
       token: "ETH",
-      token_standard: "NATIVE"
+      token_standard: "NATIVE",
+      amount: formatUnitsFromBase(tx.value, 18)
     };
   }
 
@@ -955,7 +989,8 @@ async function resolveBsc(txid) {
           token_standard: "BEP20",
           explorer_link: `https://bscscan.com/tx/${txid}`,
           from: tx.from || null,
-          to: pickTransferRecipient(firstTransfer) || tx.to || null
+          to: pickTransferRecipient(firstTransfer) || tx.to || null,
+          amount: extractAmountFromTransfer(firstTransfer)
         };
       }
     }
@@ -973,7 +1008,8 @@ async function resolveBsc(txid) {
         token_standard: tokenFromReceipt.token_standard,
         explorer_link: `https://bscscan.com/tx/${txid}`,
         from: tx.from || null,
-        to: tokenFromReceipt.to || tx.to || null
+        to: tokenFromReceipt.to || tx.to || null,
+        amount: formatUnitsFromBase(tx.value, 18)
       };
     }
 
@@ -986,7 +1022,8 @@ async function resolveBsc(txid) {
         token_standard: "BEP20",
         explorer_link: `https://bscscan.com/tx/${txid}`,
         from: tx.from || null,
-        to: tx.to || null
+        to: tx.to || null,
+        amount: formatUnitsFromBase(tx.value, 18)
       };
     }
 
@@ -998,7 +1035,8 @@ async function resolveBsc(txid) {
       token_standard: isNative ? "NATIVE" : "UNKNOWN",
       explorer_link: `https://bscscan.com/tx/${txid}`,
       from: tx.from || null,
-      to: tx.to || null
+      to: tx.to || null,
+      amount: formatUnitsFromBase(tx.value, 18)
     };
   }
 
@@ -1009,7 +1047,8 @@ async function resolveBsc(txid) {
     token_standard: null,
     explorer_link: `https://bscscan.com/tx/${txid}`,
     from: null,
-    to: null
+    to: null,
+    amount: null
   };
 }
 
@@ -1066,7 +1105,8 @@ async function resolvePolygon(txid) {
           token_standard: "ERC20",
           explorer_link: `https://polygonscan.com/tx/${txid}`,
           from: tx.from || null,
-          to: pickTransferRecipient(firstTransfer) || tx.to || null
+          to: pickTransferRecipient(firstTransfer) || tx.to || null,
+          amount: extractAmountFromTransfer(firstTransfer)
         };
       }
     }
@@ -1084,7 +1124,8 @@ async function resolvePolygon(txid) {
         token_standard: tokenFromReceipt.token_standard,
         explorer_link: `https://polygonscan.com/tx/${txid}`,
         from: tx.from || null,
-        to: tokenFromReceipt.to || tx.to || null
+        to: tokenFromReceipt.to || tx.to || null,
+        amount: formatUnitsFromBase(tx.value, 18)
       };
     }
 
@@ -1097,7 +1138,8 @@ async function resolvePolygon(txid) {
         token_standard: "ERC20",
         explorer_link: `https://polygonscan.com/tx/${txid}`,
         from: tx.from || null,
-        to: tx.to || null
+        to: tx.to || null,
+        amount: formatUnitsFromBase(tx.value, 18)
       };
     }
 
@@ -1109,7 +1151,8 @@ async function resolvePolygon(txid) {
       token_standard: "NATIVE",
       explorer_link: `https://polygonscan.com/tx/${txid}`,
       from: tx.from || null,
-      to: tx.to || null
+      to: tx.to || null,
+      amount: formatUnitsFromBase(tx.value, 18)
     };
   }
 
@@ -1120,7 +1163,8 @@ async function resolvePolygon(txid) {
     token_standard: null,
     explorer_link: `https://polygonscan.com/tx/${txid}`,
     from: null,
-    to: null
+    to: null,
+    amount: null
   };
 }
 
@@ -1151,7 +1195,8 @@ async function resolveTron(txid) {
         token_standard: "TRC20",
         explorer_link: `https://tronscan.org/#/transaction/${txid}`,
         from: data.ownerAddress || null,
-        to: pickTransferRecipient(firstTransfer) || data.toAddress || null
+        to: pickTransferRecipient(firstTransfer) || data.toAddress || null,
+        amount: extractAmountFromTransfer(firstTransfer)
       };
     }
 
@@ -1166,7 +1211,8 @@ async function resolveTron(txid) {
       token_standard: isNative ? "NATIVE" : "UNKNOWN",
       explorer_link: `https://tronscan.org/#/transaction/${txid}`,
       from: data.ownerAddress || null,
-      to: data.toAddress || null
+      to: data.toAddress || null,
+      amount: isNative ? formatUnitsFromBase(data.amount, 6) : null
     };
   }
 
@@ -1177,7 +1223,8 @@ async function resolveTron(txid) {
     token_standard: null,
     explorer_link: `https://tronscan.org/#/transaction/${txid}`,
     from: null,
-    to: null
+    to: null,
+    amount: null
   };
 }
 
@@ -1191,7 +1238,8 @@ async function resolveSolana(txid) {
       token_standard: null,
       explorer_link: `https://solscan.io/tx/${txid}`,
       from: null,
-      to: null
+      to: null,
+      amount: null
     };
   }
 
@@ -1204,7 +1252,8 @@ async function resolveSolana(txid) {
     token_standard: tokenDetection.token_standard,
     explorer_link: `https://solscan.io/tx/${txid}`,
     from: participants.from,
-    to: participants.to
+    to: participants.to,
+    amount: null
   };
 }
 
@@ -1236,7 +1285,8 @@ async function resolveOpbnb(txid) {
         token_standard: "BEP20",
         explorer_link: `https://opbnbscan.com/tx/${txid}`,
         from: tx.from || null,
-        to: pickTransferRecipient(firstTransfer) || tx.to || null
+        to: pickTransferRecipient(firstTransfer) || tx.to || null,
+        amount: extractAmountFromTransfer(firstTransfer)
       };
     }
 
@@ -1253,7 +1303,8 @@ async function resolveOpbnb(txid) {
         token_standard: tokenFromReceipt.token_standard,
         explorer_link: `https://opbnbscan.com/tx/${txid}`,
         from: tx.from || null,
-        to: tokenFromReceipt.to || tx.to || null
+        to: tokenFromReceipt.to || tx.to || null,
+        amount: formatUnitsFromBase(tx.value, 18)
       };
     }
 
@@ -1265,7 +1316,8 @@ async function resolveOpbnb(txid) {
       token_standard: isNative ? "NATIVE" : "UNKNOWN",
       explorer_link: `https://opbnbscan.com/tx/${txid}`,
       from: tx.from || null,
-      to: tx.to || null
+      to: tx.to || null,
+      amount: formatUnitsFromBase(tx.value, 18)
     };
   }
 
@@ -1276,7 +1328,8 @@ async function resolveOpbnb(txid) {
     token_standard: null,
     explorer_link: `https://opbnbscan.com/tx/${txid}`,
     from: null,
-    to: null
+    to: null,
+    amount: null
   };
 }
 
@@ -1500,6 +1553,7 @@ function buildPaymentTicketInternalNote(ticketState) {
     `- resolver_status: ${ticketState.resolver_status}`,
     `- actual_network: ${ticketState.actual_network || "UNKNOWN"}`,
     `- actual_token: ${ticketState.actual_token || "UNKNOWN"}`,
+    `- actual_amount: ${ticketState.actual_amount || "UNKNOWN"}`,
     `- token_standard: ${ticketState.token_standard || "UNKNOWN"}`,
     `- explorer: ${ticketState.explorer_link || "N/A"}`,
     "",
@@ -1518,6 +1572,7 @@ function buildConfirmoMatchInternalNote(ticketState) {
     "Blockchain Actual (Auto):",
     `- actual_network: ${ticketState.actual_network || "UNKNOWN"}`,
     `- actual_token: ${ticketState.actual_token || "UNKNOWN"}`,
+    `- actual_amount: ${ticketState.actual_amount || "UNKNOWN"}`,
     `- actual_paid_to_wallet: ${ticketState.receiver || "UNKNOWN"}`,
     `- token_standard: ${ticketState.token_standard || "UNKNOWN"}`,
     `- explorer: ${ticketState.explorer_link || "N/A"}`,
@@ -1537,6 +1592,7 @@ function buildConfirmoRecoveryPayload(ticketState) {
     expected_wallet_address: ticketState.expected_wallet_address,
     actual_network: ticketState.actual_network,
     actual_token: ticketState.actual_token,
+    actual_amount: ticketState.actual_amount,
     actual_paid_to_wallet: ticketState.receiver,
     refund_wallet: ticketState.refund_wallet,
     created_at: new Date().toISOString()
@@ -1856,6 +1912,7 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
     stored.resolver_status = result.status;
     stored.actual_network = result.network;
     stored.actual_token = result.token;
+    stored.actual_amount = result.amount || null;
     stored.token_standard = result.token_standard;
     stored.explorer_link = result.explorer_link;
     stored.sender = result.from;
@@ -2164,7 +2221,8 @@ app.get("/simulate-zendesk-ticket", blockInProduction, async (req, res) => {
       const actualPayment = {
         status: "FOUND",
         network: "Ethereum",
-        token: token
+        token: token,
+        amount: tokenDetection.amount || formatUnitsFromBase(tx.value, 18)
       };
 
       const matchStatus = matchPayment(expectedPayment, actualPayment);
@@ -2177,6 +2235,7 @@ app.get("/simulate-zendesk-ticket", blockInProduction, async (req, res) => {
         txid: txid,
         actual_network: "Ethereum",
         actual_token: token,
+        actual_amount: actualPayment.amount,
         expected_network: expectedPayment.network,
         expected_token: expectedPayment.token,
         match_status: matchStatus,
@@ -2199,6 +2258,7 @@ app.get("/simulate-zendesk-ticket", blockInProduction, async (req, res) => {
           status: "FOUND",
           network: "Ethereum",
           token: token,
+          amount: actualPayment.amount,
           token_standard: tokenDetection.token_standard,
           expected_network: expectedPayment.network,
           expected_token: expectedPayment.token,
@@ -2222,6 +2282,7 @@ app.get("/simulate-zendesk-ticket", blockInProduction, async (req, res) => {
       txid: txid,
       actual_network: "Ethereum",
       actual_token: null,
+      actual_amount: null,
       expected_network: "Ethereum",
       expected_token: "USDT",
       match_status: "tx_not_found",
