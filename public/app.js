@@ -225,7 +225,10 @@ function setWalletStepOutput(res) {
 
 async function runResolve(ticketId, txid) {
   const url = `/zendesk/payment-ticket`;
-  const body = { ticket_id: ticketId, txid };
+  const body = { txid };
+  if (ticketId) {
+    body.ticket_id = ticketId;
+  }
 
   setOutputs({ method: "POST", url, body }, null);
 
@@ -300,10 +303,10 @@ window.addEventListener("DOMContentLoaded", () => {
     $("ticketId2").value = ticketId;
     $("ticketIdConfirmo").value = ticketId;
 
-    if (!ticketId || !txid) {
+    if (!txid) {
       return setOutputs(
         { error: "Missing input" },
-        { message: "Please enter ticket id + txid." }
+        { message: "Please enter txid." }
       );
     }
 

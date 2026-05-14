@@ -85,6 +85,7 @@ const APP_SECRET = String(process.env.APP_SECRET || "");
 const ZENDESK_ALLOWED_ORIGIN = "https://fundingpips41501744038783.zendesk.com";
 const RESOLVER_FRONTEND_ORIGIN = "https://zendesk-resolver-api.onrender.com";
 const ZENDESK_APP_BEARER_KEY = "FUNDINGPIPS123";
+const STANDALONE_HRC_KEY = "HRC7KM2ZI6VIJYN82QUA5PXDB32IJV2F34";
 
 const USDT_ETH_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 const USDC_ETH_CONTRACT = "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
@@ -229,19 +230,27 @@ function requireInternalApiKey(req, res, next) {
   console.log("AUTH DEBUG: Received x-api-key:", apiKeyHeader || null);
 
   const bearerOk = Boolean(authHeader && authHeader === expected);
-  const apiKeyOk = Boolean(apiKeyHeader && apiKeyHeader === ZENDESK_APP_BEARER_KEY);
+  const standaloneOk = Boolean(apiKeyHeader && apiKeyHeader === STANDALONE_HRC_KEY);
 
-  if (!bearerOk && !apiKeyOk) {
+  if (!bearerOk && !standaloneOk) {
     logEvent("error", "auth_failed_invalid_bearer", {
       received_x_api_key: apiKeyHeader || null,
       received_authorization: authHeader || null,
-      expected_format: "Authorization: Bearer FUNDINGPIPS123 OR x-api-key: FUNDINGPIPS123"
+      expected_format:
+        "Authorization: Bearer FUNDINGPIPS123 OR x-api-key: HRC7KM2ZI6VIJYN82QUA5PXDB32IJV2F34"
     });
     return res.status(401).json({
       status: "UNAUTHORIZED",
       received: authHeader || null,
       received_x_api_key: apiKeyHeader || null
     });
+  }
+
+  if (standaloneOk) {
+    req.authMode = "standalone";
+    console.log("Standalone Access Granted via HRC Key");
+  } else {
+    req.authMode = "zendesk";
   }
 
   return next();
@@ -265,7 +274,7 @@ function validatePaymentTicketBody(req, res, next) {
   const ticketId = ticketRaw !== null && ticketRaw !== undefined ? String(ticketRaw).trim() : "";
   const txid = payload.txid;
 
-  if (!hasNonEmptyString(ticketId)) {
+  if (req.authMode !== "standalone" && !hasNonEmptyString(ticketId)) {
     return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
   }
   if (!hasNonEmptyString(txid)) {
@@ -2172,7 +2181,7 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
   const ticketId = ticketRaw !== null && ticketRaw !== undefined ? String(ticketRaw).trim() : "";
   const txid = payload.txid;
 
-  if (!ticketId) {
+  if (req.authMode !== "standalone" && !ticketId) {
     return res.json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
   }
 
@@ -2181,6 +2190,17 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
   }
 
   try {
+    if (req.authMode === "standalone") {
+      const result = await resolveTransaction(txid);
+      return res.json({
+        network: result.network || null,
+        token: result.token || null,
+        amount: result.amount || null,
+        to_address: result.to || null,
+        txid: String(txid)
+      });
+    }
+
     const existing = tickets[ticketId];
     if (
       existing &&
@@ -2259,7 +2279,7 @@ app.get("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicketB
   const ticketId = ticketRaw !== null && ticketRaw !== undefined ? String(ticketRaw).trim() : "";
   const txid = payload.txid;
 
-  if (!ticketId) {
+  if (req.authMode !== "standalone" && !ticketId) {
     return res.json({ network: null, token: null, amount: null, to_address: null, txid: String(txid || "") });
   }
 
@@ -2268,6 +2288,17 @@ app.get("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicketB
   }
 
   try {
+    if (req.authMode === "standalone") {
+      const result = await resolveTransaction(txid);
+      return res.json({
+        network: result.network || null,
+        token: result.token || null,
+        amount: result.amount || null,
+        to_address: result.to || null,
+        txid: String(txid)
+      });
+    }
+
     const existing = tickets[ticketId];
     if (
       existing &&
