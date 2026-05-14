@@ -1,9 +1,9 @@
 const axios = require("axios");
 
 function createZendeskClient() {
-  const subdomain = process.env.ZENDESK_SUBDOMAIN;
-  const email = process.env.ZENDESK_EMAIL;
-  const apiToken = process.env.ZENDESK_API_TOKEN;
+  const subdomain = process.env.ZENDESK_SUBDOMAIN || process.env.ZD_SUBDOMAIN;
+  const email = process.env.ZENDESK_EMAIL || process.env.ZD_EMAIL;
+  const apiToken = process.env.ZENDESK_API_TOKEN || process.env.ZD_TOKEN;
 
   const enabled = Boolean(subdomain && email && apiToken);
 
