@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const axios = require("axios");
+const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
@@ -27,6 +28,24 @@ const {
 });
 
 const app = express();
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      const allowed = new Set([ZENDESK_ALLOWED_ORIGIN]);
+      if (!IS_PRODUCTION) {
+        allowed.add("http://localhost:3000");
+        allowed.add("http://127.0.0.1:3000");
+      }
+      if (allowed.has(origin)) return callback(null, true);
+      return callback(new Error("CORS origin not allowed"));
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-api-key", "x-app-secret"],
+    credentials: false
+  })
+);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -57,6 +76,8 @@ const PORT = process.env.PORT || 3000;
 const NODE_ENV = String(process.env.NODE_ENV || "development").toLowerCase();
 const IS_PRODUCTION = NODE_ENV === "production";
 const INTERNAL_API_KEY = String(process.env.INTERNAL_API_KEY || "");
+const APP_SECRET = String(process.env.APP_SECRET || "");
+const ZENDESK_ALLOWED_ORIGIN = "https://fundingpips41501744038783.zendesk.com";
 
 const USDT_ETH_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
 const USDC_ETH_CONTRACT = "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
@@ -192,23 +213,26 @@ function isAllowedNetworkName(network) {
 }
 
 function requireInternalApiKey(req, res, next) {
-  if (!INTERNAL_API_KEY) {
+  if (!INTERNAL_API_KEY && !APP_SECRET) {
     return res.status(503).json({
       version: APP_VERSION,
       status: "MISCONFIGURED",
-      message: "INTERNAL_API_KEY is not configured on server"
+      message: "INTERNAL_API_KEY or APP_SECRET is not configured on server"
     });
   }
 
   const headerKey = req.get("x-api-key");
+  const appSecretHeader = req.get("x-app-secret");
   const authHeader = req.get("authorization");
   const bearerKey =
     authHeader && authHeader.toLowerCase().startsWith("bearer ")
       ? authHeader.slice(7).trim()
       : "";
-  const incomingKey = headerKey || bearerKey;
+  const incomingKey = appSecretHeader || headerKey || bearerKey;
+  const internalOk = INTERNAL_API_KEY && incomingKey === INTERNAL_API_KEY;
+  const appSecretOk = APP_SECRET && incomingKey === APP_SECRET;
 
-  if (!incomingKey || incomingKey !== INTERNAL_API_KEY) {
+  if (!incomingKey || (!internalOk && !appSecretOk)) {
     return res.status(401).json({
       version: APP_VERSION,
       status: "UNAUTHORIZED",
@@ -2870,8 +2894,8 @@ function validateRequiredEnv() {
   if (!ETHERSCAN_API_KEY) {
     missing.push("ETHERSCAN_API_KEY");
   }
-  if (!INTERNAL_API_KEY) {
-    missing.push("INTERNAL_API_KEY");
+  if (!INTERNAL_API_KEY && !APP_SECRET) {
+    missing.push("INTERNAL_API_KEY_or_APP_SECRET");
   }
   return missing;
 }
