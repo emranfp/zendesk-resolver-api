@@ -33,12 +33,14 @@ app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
-      const allowed = new Set([ZENDESK_ALLOWED_ORIGIN]);
+      const allowed = new Set([ZENDESK_ALLOWED_ORIGIN, RESOLVER_FRONTEND_ORIGIN]);
       const isZendeskOrigin = /^https:\/\/[a-zA-Z0-9-]+\.zendesk\.com$/.test(origin);
       const isZendeskAssetsOrigin = /^https:\/\/[a-zA-Z0-9.-]*zdassets\.com$/.test(origin);
       if (!IS_PRODUCTION) {
         allowed.add("http://localhost:3000");
         allowed.add("http://127.0.0.1:3000");
+        allowed.add("http://localhost:3001");
+        allowed.add("http://127.0.0.1:3001");
       }
       if (allowed.has(origin) || isZendeskOrigin || isZendeskAssetsOrigin) return callback(null, true);
       logEvent("error", "cors_origin_blocked", { origin });
@@ -81,6 +83,7 @@ const IS_PRODUCTION = NODE_ENV === "production";
 const INTERNAL_API_KEY = String(process.env.INTERNAL_API_KEY || "");
 const APP_SECRET = String(process.env.APP_SECRET || "");
 const ZENDESK_ALLOWED_ORIGIN = "https://fundingpips41501744038783.zendesk.com";
+const RESOLVER_FRONTEND_ORIGIN = "https://zendesk-resolver-api.onrender.com";
 const ZENDESK_APP_BEARER_KEY = "FUNDINGPIPS123";
 
 const USDT_ETH_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
