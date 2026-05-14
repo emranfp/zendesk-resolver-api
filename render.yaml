@@ -18,3 +18,9 @@ services:
         sync: false
       - key: POLYGONSCAN_API_KEY
         sync: false
+      - key: ZENDESK_SUBDOMAIN
+        sync: false
+      - key: ZENDESK_EMAIL
+        sync: false
+      - key: ZENDESK_API_TOKEN
+        sync: false

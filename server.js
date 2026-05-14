@@ -1561,18 +1561,52 @@ function buildWalletFlowInternalNote(ticketState) {
 }
 
 async function updateZendeskForTicket(ticketId, { tags, internalNote, publicReply }) {
-  const results = {};
+  const results = {
+    enabled: zendesk.enabled,
+    ticket_id: ticketId,
+    operations: {}
+  };
+
+  if (!zendesk.enabled) {
+    results.skipped = true;
+    results.reason = "zendesk_client_disabled_missing_env";
+    return results;
+  }
+
+  async function runOp(name, fn) {
+    try {
+      const data = await fn();
+      results.operations[name] = { ok: true, data };
+    } catch (error) {
+      const status = error && error.response ? Number(error.response.status) : null;
+      const body = error && error.response ? error.response.data : null;
+      results.operations[name] = {
+        ok: false,
+        error: {
+          message: error.message,
+          status_code: status,
+          response: body
+        }
+      };
+      logEvent("error", "zendesk_update_failed", {
+        ticket_id: ticketId,
+        operation: name,
+        status_code: status,
+        error_message: error.message
+      });
+    }
+  }
 
   if (Array.isArray(tags) && tags.length > 0) {
-    results.tags = await zendesk.addTags(ticketId, tags);
+    await runOp("tags", async () => zendesk.addTags(ticketId, tags));
   }
 
   if (internalNote) {
-    results.internal_note = await zendesk.addInternalNote(ticketId, internalNote);
+    await runOp("internal_note", async () => zendesk.addInternalNote(ticketId, internalNote));
   }
 
   if (publicReply) {
-    results.public_reply = await zendesk.addPublicReply(ticketId, publicReply);
+    await runOp("public_reply", async () => zendesk.addPublicReply(ticketId, publicReply));
   }
 
   return results;
@@ -2486,10 +2520,17 @@ app.get("/debug-tickets", blockInProduction, requireInternalApiKey, (req, res) =
 });
 
 app.get("/healthz", (req, res) => {
+  const zendeskConfig = {
+    subdomain: Boolean(process.env.ZENDESK_SUBDOMAIN),
+    email: Boolean(process.env.ZENDESK_EMAIL),
+    api_token: Boolean(process.env.ZENDESK_API_TOKEN)
+  };
   res.json({
     status: "ok",
     version: APP_VERSION,
-    env: NODE_ENV
+    env: NODE_ENV,
+    zendesk_enabled: zendesk.enabled,
+    zendesk_config: zendeskConfig
   });
 });
 
