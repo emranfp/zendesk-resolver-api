@@ -249,7 +249,9 @@ function blockInProduction(req, res, next) {
 }
 
 function validatePaymentTicketBody(req, res, next) {
-  const ticketId = req.body && req.body.ticket_id;
+  const ticketRaw =
+    req.body && (req.body.ticket_id ?? req.body.ticketId ?? req.body.id ?? null);
+  const ticketId = ticketRaw !== null && ticketRaw !== undefined ? String(ticketRaw).trim() : "";
   const txid = req.body && req.body.txid;
 
   if (!hasNonEmptyString(ticketId)) {
@@ -2153,7 +2155,9 @@ app.get("/ui", (req, res) => {
 // Realistic Zendesk-style POST endpoint (v1)
 // Input: { ticket_id, txid }
 app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicketBody, async (req, res) => {
-  const ticketId = req.body.ticket_id;
+  console.log("Received Body:", req.body);
+  const ticketRaw = req.body && (req.body.ticket_id ?? req.body.ticketId ?? req.body.id ?? null);
+  const ticketId = ticketRaw !== null && ticketRaw !== undefined ? String(ticketRaw).trim() : "";
   const txid = req.body.txid;
 
   if (!ticketId) {
