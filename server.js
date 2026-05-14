@@ -2176,13 +2176,10 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
       (existing.resolver_status === "FOUND" || existing.resolver_status === "NOT_FOUND")
     ) {
       return res.json({
-        version: APP_VERSION,
-        status: "PAYMENT_TICKET_REPLAY",
-        ticket_id: ticketId,
-        saved_ticket_memory: existing,
-        idempotent: true,
-        next_action:
-          existing.match_status === "tx_not_found" ? "ask_user_for_correct_txid" : "ops_enter_confirmo_expected"
+        network: existing.actual_network || null,
+        token: existing.actual_token || null,
+        amount: existing.actual_amount || null,
+        txid: String(existing.txid || txid)
       });
     }
 
@@ -2226,27 +2223,17 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
     });
 
     return res.json({
-      version: APP_VERSION,
-      status: "PAYMENT_TICKET_PROCESSED",
-      zendesk_enabled: zendesk.enabled,
-      ticket_id: ticketId,
-      saved_ticket_memory: stored,
-      resolver_result: result,
-      resolver_amount_usd: amountUsd,
-      zendesk_update,
-      next_action:
-        matchStatus === "tx_not_found" ? "ask_user_for_correct_txid" : "ops_enter_confirmo_expected"
+      network: result.network || null,
+      token: result.token || null,
+      amount: result.amount || null,
+      txid: String(txid)
     });
   } catch (error) {
-    return res.json({
-      version: APP_VERSION,
-      status: "ERROR",
-      message: error.message,
-      ticket_id: ticketId,
-      zendesk_tags: ["crypto_resolver_error"],
-      zendesk_internal_note:
-        "Resolver API returned an error while processing Zendesk payment ticket. Manual review required.",
-      next_action: "manual_review"
+    return res.status(500).json({
+      network: null,
+      token: null,
+      amount: null,
+      txid: String(txid || "")
     });
   }
 });

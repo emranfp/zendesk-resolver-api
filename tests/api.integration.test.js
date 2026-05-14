@@ -195,8 +195,9 @@ async function main() {
         });
         const body = await readJson(res);
         assert.equal(res.status, 200);
-        assert.equal(body.status, "PAYMENT_TICKET_REPLAY");
-        assert.equal(body.idempotent, true);
+        assert.equal(body.network, "Ethereum");
+        assert.equal(body.token, "USDT");
+        assert.equal(body.txid, "0xabc123");
       },
       { storeData: replayState }
     );
