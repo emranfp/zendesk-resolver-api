@@ -221,17 +221,24 @@ function isAllowedNetworkName(network) {
 
 function requireInternalApiKey(req, res, next) {
   const authHeader = req.headers.authorization;
+  const apiKeyHeader = req.get("x-api-key");
   const expected = `Bearer ${ZENDESK_APP_BEARER_KEY}`;
   console.log("AUTH DEBUG: Received Header:", authHeader);
+  console.log("AUTH DEBUG: Received x-api-key:", apiKeyHeader || null);
 
-  if (!authHeader || authHeader !== expected) {
+  const bearerOk = Boolean(authHeader && authHeader === expected);
+  const apiKeyOk = Boolean(apiKeyHeader && apiKeyHeader === ZENDESK_APP_BEARER_KEY);
+
+  if (!bearerOk && !apiKeyOk) {
     logEvent("error", "auth_failed_invalid_bearer", {
+      received_x_api_key: apiKeyHeader || null,
       received_authorization: authHeader || null,
-      expected_format: "Authorization: Bearer FUNDINGPIPS123"
+      expected_format: "Authorization: Bearer FUNDINGPIPS123 OR x-api-key: FUNDINGPIPS123"
     });
     return res.status(401).json({
       status: "UNAUTHORIZED",
-      received: authHeader || null
+      received: authHeader || null,
+      received_x_api_key: apiKeyHeader || null
     });
   }
 
