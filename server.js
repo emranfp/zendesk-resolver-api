@@ -361,9 +361,20 @@ function formatUnitsFromBase(valueLike, decimals) {
 
 function extractAmountFromTransfer(transfer) {
   if (!transfer || typeof transfer !== "object") return null;
-  const raw = transfer.value ?? transfer.amount ?? transfer.quant ?? null;
+  const raw = transfer.value ?? transfer.amount ?? transfer.amount_str ?? transfer.quant ?? null;
   const decimals = transfer.tokenDecimal ?? transfer.token_decimals ?? transfer.decimals ?? 0;
   return formatUnitsFromBase(raw, decimals);
+}
+
+function pickBestTransferWithAmount(transfers) {
+  if (!Array.isArray(transfers) || transfers.length === 0) return null;
+  const withRecipient = transfers.filter((t) => pickTransferRecipient(t));
+  const candidates = withRecipient.length ? withRecipient : transfers;
+  const nonZero = candidates.find((t) => {
+    const amt = extractAmountFromTransfer(t);
+    return amt !== null && amt !== "0";
+  });
+  return nonZero || candidates[0];
 }
 
 function normalizeEthereumResult(txid, tx, tokenDetection) {
@@ -648,15 +659,38 @@ function detectSolanaToken(tx) {
   const pre = Array.isArray(meta && meta.preTokenBalances) ? meta.preTokenBalances : [];
   const post = Array.isArray(meta && meta.postTokenBalances) ? meta.postTokenBalances : [];
   const allBalances = pre.concat(post);
+  const mintSet = new Set(allBalances.map((b) => String((b && b.mint) || "")));
 
-  for (const balance of allBalances) {
-    const mint = String(balance && balance.mint ? balance.mint : "");
-    if (mint === SOLANA_USDT_MINT) {
-      return { token: "USDT", token_standard: "SPL" };
+  function pickLargestDeltaForMint(mint) {
+    const byAccount = new Map();
+    for (const b of pre) {
+      if (!b || String(b.mint || "") !== mint) continue;
+      const key = String(b.accountIndex ?? `${b.owner || ""}:${b.mint || ""}`);
+      byAccount.set(key, {
+        pre: Number(b.uiTokenAmount && b.uiTokenAmount.uiAmount ? b.uiTokenAmount.uiAmount : 0),
+        post: 0
+      });
     }
-    if (mint === SOLANA_USDC_MINT) {
-      return { token: "USDC", token_standard: "SPL" };
+    for (const b of post) {
+      if (!b || String(b.mint || "") !== mint) continue;
+      const key = String(b.accountIndex ?? `${b.owner || ""}:${b.mint || ""}`);
+      const row = byAccount.get(key) || { pre: 0, post: 0 };
+      row.post = Number(b.uiTokenAmount && b.uiTokenAmount.uiAmount ? b.uiTokenAmount.uiAmount : 0);
+      byAccount.set(key, row);
     }
+    let best = 0;
+    for (const row of byAccount.values()) {
+      const delta = Math.abs((row.post || 0) - (row.pre || 0));
+      if (delta > best) best = delta;
+    }
+    return best > 0 ? String(best) : null;
+  }
+
+  if (mintSet.has(SOLANA_USDT_MINT)) {
+    return { token: "USDT", token_standard: "SPL", amount: pickLargestDeltaForMint(SOLANA_USDT_MINT) };
+  }
+  if (mintSet.has(SOLANA_USDC_MINT)) {
+    return { token: "USDC", token_standard: "SPL", amount: pickLargestDeltaForMint(SOLANA_USDC_MINT) };
   }
 
   const message = tx && tx.transaction && tx.transaction.message ? tx.transaction.message : null;
@@ -666,11 +700,11 @@ function detectSolanaToken(tx) {
     const info = parsed && parsed.info ? parsed.info : null;
     const lamports = Number(info && info.lamports ? info.lamports : 0);
     if (ix.program === "system" && parsed && parsed.type === "transfer" && lamports > 0) {
-      return { token: "SOL", token_standard: "NATIVE" };
+      return { token: "SOL", token_standard: "NATIVE", amount: formatUnitsFromBase(String(lamports), 9) };
     }
   }
 
-  return { token: "UNKNOWN", token_standard: "UNKNOWN" };
+  return { token: "UNKNOWN", token_standard: "UNKNOWN", amount: null };
 }
 
 function getSolanaFromTo(tx) {
@@ -860,7 +894,7 @@ async function detectEthereumTokenSimple(txid, tx) {
   // - Else -> UNKNOWN (could be contract interaction)
   if (tx.to && String(tx.to).toLowerCase() === USDT_ETH_CONTRACT.toLowerCase()) {
     const directTransfers = await fetchErc20TransfersFromEtherscan(txid);
-    const directTransfer = directTransfers.find((t) => pickTransferRecipient(t)) || directTransfers[0] || null;
+    const directTransfer = pickBestTransferWithAmount(directTransfers);
     const tokenFromReceipt = await detectEvmTokenFromReceipt({
       chainId: 1,
       network: "Ethereum",
@@ -875,7 +909,7 @@ async function detectEthereumTokenSimple(txid, tx) {
   }
 
   const erc20Transfers = await fetchErc20TransfersFromEtherscan(txid);
-  const firstTransfer = erc20Transfers.find((t) => pickTransferRecipient(t)) || erc20Transfers[0];
+  const firstTransfer = pickBestTransferWithAmount(erc20Transfers);
 
   if (firstTransfer && firstTransfer.tokenSymbol) {
     return {
@@ -976,7 +1010,7 @@ async function resolveBsc(txid) {
   }
 
   if (tx) {
-    const firstTransfer = transfers.find((t) => pickTransferRecipient(t)) || transfers[0];
+    const firstTransfer = pickBestTransferWithAmount(transfers);
     if (firstTransfer && firstTransfer.tokenSymbol) {
       const normalized = normalizeEvmTokenSymbol(
         "BSC",
@@ -1092,7 +1126,7 @@ async function resolvePolygon(txid) {
   }
 
   if (tx) {
-    const firstTransfer = transfers.find((t) => pickTransferRecipient(t)) || transfers[0];
+    const firstTransfer = pickBestTransferWithAmount(transfers);
     if (firstTransfer && firstTransfer.tokenSymbol) {
       const normalized = normalizeEvmTokenSymbol(
         "Polygon",
@@ -1182,7 +1216,7 @@ async function resolveTron(txid) {
 
   if (data && (data.hash || data.transactionHash || data.id)) {
     const trc20Transfers = Array.isArray(data.trc20TransferInfo) ? data.trc20TransferInfo : [];
-    const firstTransfer = trc20Transfers.find((t) => pickTransferRecipient(t)) || trc20Transfers[0];
+    const firstTransfer = pickBestTransferWithAmount(trc20Transfers);
 
     if (firstTransfer) {
       const tokenSymbol =
@@ -1255,7 +1289,7 @@ async function resolveSolana(txid) {
     explorer_link: `https://solscan.io/tx/${txid}`,
     from: participants.from,
     to: participants.to,
-    amount: null
+    amount: tokenDetection.amount || null
   };
 }
 
@@ -1278,7 +1312,7 @@ async function resolveOpbnb(txid) {
   }
 
   if (tx) {
-    const firstTransfer = transfers.find((t) => pickTransferRecipient(t)) || transfers[0];
+    const firstTransfer = pickBestTransferWithAmount(transfers);
     if (firstTransfer && firstTransfer.tokenSymbol) {
       return {
         status: "FOUND",
