@@ -106,7 +106,7 @@ async function main() {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "x-api-key": "k1"
+            authorization: "Bearer FUNDINGPIPS123"
           },
           body: JSON.stringify({ ticket_id: "t1" })
         });
@@ -126,7 +126,7 @@ async function main() {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "x-api-key": "k1"
+            authorization: "Bearer FUNDINGPIPS123"
           },
           body: JSON.stringify({
             ticket_id: "t1",
@@ -163,7 +163,7 @@ async function main() {
         assert.equal(noKey.status, 401);
 
         const withKey = await fetch(`${base}/debug-tickets`, {
-          headers: { "x-api-key": "k1" }
+          headers: { authorization: "Bearer FUNDINGPIPS123" }
         });
         assert.equal(withKey.status, 200);
       }
@@ -189,7 +189,7 @@ async function main() {
           method: "POST",
           headers: {
             "content-type": "application/json",
-            "x-api-key": "k1"
+            authorization: "Bearer FUNDINGPIPS123"
           },
           body: JSON.stringify({ ticket_id: "replay1", txid: "0xabc123" })
         });
