@@ -324,13 +324,24 @@ function validateConfirmoInputBody(req, res, next) {
 
 function validateWalletReplyBody(req, res, next) {
   const ticketId = req.body && req.body.ticket_id;
+  const isValidationStep = Boolean(
+    req.body && (req.body.validation_step || req.body.validate_only || req.body.mode === "validate_wallet")
+  );
   const hasMessage = hasNonEmptyString(req.body && (req.body.message || req.body.user_message));
   const hasRefundWallet = hasNonEmptyString(req.body && req.body.refund_wallet);
+  const hasAddress = hasNonEmptyString(req.body && (req.body.address || req.body.wallet));
 
-  if (req.authMode !== "standalone" && !hasNonEmptyString(ticketId)) {
+  if (!isValidationStep && req.authMode !== "standalone" && !hasNonEmptyString(ticketId)) {
     return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
   }
-  if (!hasMessage && !hasRefundWallet) {
+  if (isValidationStep && !hasMessage && !hasRefundWallet && !hasAddress) {
+    return res.status(400).json({
+      version: APP_VERSION,
+      status: "ERROR",
+      message: "Missing address or message"
+    });
+  }
+  if (!isValidationStep && !hasMessage && !hasRefundWallet) {
     return res.status(400).json({
       version: APP_VERSION,
       status: "ERROR",
@@ -2548,6 +2559,7 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
   const ticketId = req.body.ticket_id ? String(req.body.ticket_id) : "";
   const message = req.body.message || req.body.user_message;
   const refundWallet = req.body.refund_wallet;
+  const address = req.body.address || req.body.wallet;
   const actualWalletInput = req.body.actual_wallet || req.body.actual_to_address || null;
 
   const isStandalone = !ticketId;
@@ -2557,8 +2569,28 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
   const resolvedNetwork =
     (stored && (stored.expected_network || stored.actual_network)) ||
     req.body.actual_network ||
+    req.body.network ||
+    req.body.expected_network ||
     standaloneSession.actual_network ||
     "Ethereum";
+  const validationStep = Boolean(req.body.validation_step || req.body.validate_only || req.body.mode === "validate_wallet");
+
+  if (validationStep) {
+    const walletCandidate = address || refundWallet || extractWalletFromMessage(resolvedNetwork, message || "");
+    const formatCheck = validateWalletFormat(resolvedNetwork, walletCandidate || "");
+    if (!formatCheck.valid) {
+      return res.status(400).json({
+        status: "ERROR",
+        message: "Invalid address format"
+      });
+    }
+    const result = await validateWalletExistsOnChain(resolvedNetwork, walletCandidate);
+    return res.json({
+      status: "SUCCESS",
+      exists: Boolean(result.exists),
+      details: result.details
+    });
+  }
 
   if (isStandalone) {
     const walletCandidate = refundWallet || extractWalletFromMessage(resolvedNetwork, message || "");
@@ -3101,6 +3133,82 @@ function validateRequiredEnv() {
     missing.push("LOOKUP_API_KEY");
   }
   return missing;
+}
+
+async function hasEvmAddressActivity(network, wallet) {
+  const chainIdByNetwork = { Ethereum: 1, BSC: 56, Polygon: 137, opBNB: 204 };
+  const chainId = chainIdByNetwork[network];
+  if (!chainId) return false;
+
+  try {
+    const url =
+      `https://api.etherscan.io/v2/api?chainid=${chainId}` +
+      `&module=account&action=txlist&address=${wallet}&startblock=0&endblock=99999999&page=1&offset=1&sort=desc&apikey=${ETHERSCAN_API_KEY}`;
+    const response = await http.get(url, AXIOS_HTTP_OPTIONS);
+    const body = response.data && typeof response.data === "object" ? response.data : null;
+    const list = body && Array.isArray(body.result) ? body.result : [];
+    return list.length > 0;
+  } catch (error) {
+    return false;
+  }
+}
+
+function parseBigIntLike(value) {
+  try {
+    if (typeof value === "string" && value.startsWith("0x")) return BigInt(value);
+    return BigInt(String(value || "0"));
+  } catch (error) {
+    return 0n;
+  }
+}
+
+async function validateWalletExistsOnChain(network, wallet) {
+  if (network === "Ethereum") {
+    const chain = await checkEthereumWalletOnChain(wallet);
+    const hasHistory = await hasEvmAddressActivity("Ethereum", wallet);
+    const nonZeroBalance = parseBigIntLike(chain.balance_wei) > 0n;
+    return {
+      exists: hasHistory || nonZeroBalance,
+      details: hasHistory
+        ? "Address found with history"
+        : nonZeroBalance
+          ? "Address found with non-zero balance"
+          : "Address not found with activity"
+    };
+  }
+
+  if (network === "BSC" || network === "Polygon" || network === "opBNB") {
+    const chain = await checkEvmWalletOnChain(network, wallet);
+    const hasHistory = await hasEvmAddressActivity(network, wallet);
+    const nonZeroBalance = parseBigIntLike(chain.balance_wei) > 0n;
+    return {
+      exists: hasHistory || nonZeroBalance,
+      details: hasHistory
+        ? "Address found with history"
+        : nonZeroBalance
+          ? "Address found with non-zero balance"
+          : "Address not found with activity"
+    };
+  }
+
+  if (network === "Tron") {
+    const chain = await checkTronWalletOnChain(wallet);
+    return {
+      exists: Boolean(chain && chain.valid_on_chain),
+      details: chain && chain.valid_on_chain ? "Address found with history" : "Address not found with activity"
+    };
+  }
+
+  if (network === "Solana") {
+    const chain = await checkSolanaWalletOnChain(wallet);
+    const nonZeroBalance = Number(chain && chain.balance_lamports ? chain.balance_lamports : 0) > 0;
+    return {
+      exists: Boolean(chain && chain.valid_on_chain && nonZeroBalance),
+      details: nonZeroBalance ? "Address found with non-zero balance" : "Address not found with activity"
+    };
+  }
+
+  return { exists: false, details: "Unsupported network" };
 }
 
 const missingEnv = validateRequiredEnv();
