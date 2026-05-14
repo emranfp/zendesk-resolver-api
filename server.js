@@ -88,6 +88,8 @@ const SOLANA_RPC_URLS = ["https://api.mainnet-beta.solana.com", "https://solana-
 const SOLANA_USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoN3dV5fVYwSdhLkY6";
 const SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const CHAINLINK_ETH_USD_FEED = "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419";
+const CHAINLINK_MATIC_USD_FEED = "0xab594600376ec9fd91f8e885dadf0ce036862de0";
+const CHAINLINK_BNB_USD_FEED = "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee";
 
 const TICKETS_STORE_PATH = path.join(__dirname, "data", "tickets-store.json");
 const tickets = loadTicketsFromDisk();
@@ -843,6 +845,40 @@ async function fetchUsdPriceForToken(network, token) {
       if (raw && typeof raw === "string" && raw !== "0x") {
         const asInt = BigInt(raw);
         const usd = Number(asInt) / 1e8; // Chainlink ETH/USD has 8 decimals
+        if (Number.isFinite(usd) && usd > 0) return usd;
+      }
+    } catch (error) {
+      // no more fallbacks
+    }
+  }
+
+  // Source 6: On-chain Chainlink MATIC/USD oracle via Polygon RPC.
+  if (t === "MATIC") {
+    try {
+      const raw = await callJsonRpc(EVM_RPC_URLS.Polygon[0], "eth_call", [
+        { to: CHAINLINK_MATIC_USD_FEED, data: "0x50d25bcd" },
+        "latest"
+      ]);
+      if (raw && typeof raw === "string" && raw !== "0x") {
+        const asInt = BigInt(raw);
+        const usd = Number(asInt) / 1e8;
+        if (Number.isFinite(usd) && usd > 0) return usd;
+      }
+    } catch (error) {
+      // fallback below
+    }
+  }
+
+  // Source 7: On-chain Chainlink BNB/USD oracle via BSC RPC.
+  if (t === "BNB") {
+    try {
+      const raw = await callJsonRpc(EVM_RPC_URLS.BSC[0], "eth_call", [
+        { to: CHAINLINK_BNB_USD_FEED, data: "0x50d25bcd" },
+        "latest"
+      ]);
+      if (raw && typeof raw === "string" && raw !== "0x") {
+        const asInt = BigInt(raw);
+        const usd = Number(asInt) / 1e8;
         if (Number.isFinite(usd) && usd > 0) return usd;
       }
     } catch (error) {
