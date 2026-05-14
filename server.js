@@ -35,11 +35,13 @@ app.use(
       if (!origin) return callback(null, true);
       const allowed = new Set([ZENDESK_ALLOWED_ORIGIN]);
       const isZendeskOrigin = /^https:\/\/[a-zA-Z0-9-]+\.zendesk\.com$/.test(origin);
+      const isZendeskAssetsOrigin = /^https:\/\/[a-zA-Z0-9.-]*zdassets\.com$/.test(origin);
       if (!IS_PRODUCTION) {
         allowed.add("http://localhost:3000");
         allowed.add("http://127.0.0.1:3000");
       }
-      if (allowed.has(origin) || isZendeskOrigin) return callback(null, true);
+      if (allowed.has(origin) || isZendeskOrigin || isZendeskAssetsOrigin) return callback(null, true);
+      logEvent("error", "cors_origin_blocked", { origin });
       return callback(new Error("CORS origin not allowed"));
     },
     methods: ["GET", "POST", "OPTIONS"],
