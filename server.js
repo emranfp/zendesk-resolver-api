@@ -95,8 +95,8 @@ const USDC_POLYGON_CONTRACT = "0x2791bca1f2de4661ed88a30c99a7a9449aa84174";
 const USDC_POLYGON_NATIVE_CONTRACT = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359";
 const ERC20_TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-// Resolver must use this key for chain explorer lookups.
-const LOOKUP_API_KEY = "HRC7KM2ZI6VIJYN82QUA5PXDB32IJV2F34";
+// Resolver must use this key for chain explorer lookups (set in environment).
+const LOOKUP_API_KEY = String(process.env.LOOKUP_API_KEY || "");
 const ETHERSCAN_API_KEY = LOOKUP_API_KEY;
 const BSCSCAN_API_KEY = LOOKUP_API_KEY;
 const POLYGONSCAN_API_KEY = LOOKUP_API_KEY;
@@ -2962,8 +2962,8 @@ app.get("/healthz", (req, res) => {
 
 function validateRequiredEnv() {
   const missing = [];
-  if (!ETHERSCAN_API_KEY) {
-    missing.push("ETHERSCAN_API_KEY");
+  if (!LOOKUP_API_KEY) {
+    missing.push("LOOKUP_API_KEY");
   }
   return missing;
 }

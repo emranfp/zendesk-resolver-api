@@ -22,12 +22,14 @@ function loadFreshServerWithEnv(env, options = {}) {
   const original = {
     NODE_ENV: process.env.NODE_ENV,
     INTERNAL_API_KEY: process.env.INTERNAL_API_KEY,
-    ETHERSCAN_API_KEY: process.env.ETHERSCAN_API_KEY
+    ETHERSCAN_API_KEY: process.env.ETHERSCAN_API_KEY,
+    LOOKUP_API_KEY: process.env.LOOKUP_API_KEY
   };
 
   process.env.NODE_ENV = env.NODE_ENV;
   process.env.INTERNAL_API_KEY = env.INTERNAL_API_KEY;
   process.env.ETHERSCAN_API_KEY = env.ETHERSCAN_API_KEY;
+  process.env.LOOKUP_API_KEY = env.LOOKUP_API_KEY || "test_lookup_key";
 
   if (options.storeData) {
     fs.mkdirSync(path.dirname(storePath), { recursive: true });
