@@ -1,4 +1,4 @@
-require("dotenv").config({ quiet: true });
+require("dotenv").config();
 
 const express = require("express");
 const axios = require("axios");
@@ -2520,10 +2520,13 @@ app.get("/debug-tickets", blockInProduction, requireInternalApiKey, (req, res) =
 });
 
 app.get("/healthz", (req, res) => {
+  const zdSubdomain = process.env.ZD_SUBDOMAIN || process.env.ZENDESK_SUBDOMAIN;
+  const zdEmail = process.env.ZD_EMAIL || process.env.ZENDESK_EMAIL;
+  const zdToken = process.env.ZD_TOKEN || process.env.ZD_API_TOKEN || process.env.ZENDESK_API_TOKEN;
   const zendeskConfig = {
-    subdomain: Boolean(process.env.ZENDESK_SUBDOMAIN),
-    email: Boolean(process.env.ZENDESK_EMAIL),
-    api_token: Boolean(process.env.ZENDESK_API_TOKEN)
+    subdomain: Boolean(zdSubdomain),
+    email: Boolean(zdEmail),
+    api_token: Boolean(zdToken)
   };
   res.json({
     status: "ok",
