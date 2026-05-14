@@ -2179,6 +2179,7 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
         network: existing.actual_network || null,
         token: existing.actual_token || null,
         amount: existing.actual_amount || null,
+        to_address: existing.receiver || null,
         txid: String(existing.txid || txid)
       });
     }
@@ -2226,6 +2227,7 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
       network: result.network || null,
       token: result.token || null,
       amount: result.amount || null,
+      to_address: result.to || null,
       txid: String(txid)
     });
   } catch (error) {
@@ -2233,6 +2235,7 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
       network: null,
       token: null,
       amount: null,
+      to_address: null,
       txid: String(txid || "")
     });
   }
