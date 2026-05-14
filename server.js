@@ -249,10 +249,10 @@ function blockInProduction(req, res, next) {
 }
 
 function validatePaymentTicketBody(req, res, next) {
-  const ticketRaw =
-    req.body && (req.body.ticket_id ?? req.body.ticketId ?? req.body.id ?? null);
+  const payload = req.method === "GET" ? req.query || {} : req.body || {};
+  const ticketRaw = payload.ticket_id ?? payload.ticketId ?? payload.id ?? null;
   const ticketId = ticketRaw !== null && ticketRaw !== undefined ? String(ticketRaw).trim() : "";
-  const txid = req.body && req.body.txid;
+  const txid = payload.txid;
 
   if (!hasNonEmptyString(ticketId)) {
     return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
@@ -2156,9 +2156,10 @@ app.get("/ui", (req, res) => {
 // Input: { ticket_id, txid }
 app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicketBody, async (req, res) => {
   console.log("Received Body:", req.body);
-  const ticketRaw = req.body && (req.body.ticket_id ?? req.body.ticketId ?? req.body.id ?? null);
+  const payload = req.body || {};
+  const ticketRaw = payload.ticket_id ?? payload.ticketId ?? payload.id ?? null;
   const ticketId = ticketRaw !== null && ticketRaw !== undefined ? String(ticketRaw).trim() : "";
-  const txid = req.body.txid;
+  const txid = payload.txid;
 
   if (!ticketId) {
     return res.json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
@@ -2222,6 +2223,78 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
       internalNote,
       publicReply: matchStatus === "tx_not_found" ? getEmailToUser("tx_not_found") : null
     });
+
+    return res.json({
+      network: result.network || null,
+      token: result.token || null,
+      amount: result.amount || null,
+      to_address: result.to || null,
+      txid: String(txid)
+    });
+  } catch (error) {
+    return res.status(500).json({
+      network: null,
+      token: null,
+      amount: null,
+      to_address: null,
+      txid: String(txid || "")
+    });
+  }
+});
+
+app.get("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicketBody, async (req, res) => {
+  const payload = req.query || {};
+  const ticketRaw = payload.ticket_id ?? payload.ticketId ?? payload.id ?? null;
+  const ticketId = ticketRaw !== null && ticketRaw !== undefined ? String(ticketRaw).trim() : "";
+  const txid = payload.txid;
+
+  if (!ticketId) {
+    return res.json({ network: null, token: null, amount: null, to_address: null, txid: String(txid || "") });
+  }
+
+  if (!txid) {
+    return res.json({ network: null, token: null, amount: null, to_address: null, txid: String(txid || "") });
+  }
+
+  try {
+    const existing = tickets[ticketId];
+    if (
+      existing &&
+      String(existing.txid || "") === String(txid) &&
+      (existing.resolver_status === "FOUND" || existing.resolver_status === "NOT_FOUND")
+    ) {
+      return res.json({
+        network: existing.actual_network || null,
+        token: existing.actual_token || null,
+        amount: existing.actual_amount || null,
+        to_address: existing.receiver || null,
+        txid: String(existing.txid || txid)
+      });
+    }
+
+    const result = await resolveTransaction(txid);
+    const amountUsd = await computeAmountUsd({
+      network: result.network,
+      token: result.token,
+      amount: result.amount
+    });
+
+    const stored = upsertTicket(ticketId);
+    stored.txid = txid;
+    stored.resolver_status = result.status;
+    stored.actual_network = result.network;
+    stored.actual_token = result.token;
+    stored.actual_amount = result.amount || null;
+    stored.actual_amount_usd = amountUsd;
+    stored.token_standard = result.token_standard;
+    stored.explorer_link = result.explorer_link;
+    stored.sender = result.from;
+    stored.receiver = result.to;
+    stored.updated_at = new Date().toISOString();
+    const matchStatus = result.status === "FOUND" ? "needs_confirmo_input" : "tx_not_found";
+    stored.match_status = matchStatus;
+    stored.needs_wallet = false;
+    saveTicketState(ticketId, stored);
 
     return res.json({
       network: result.network || null,
