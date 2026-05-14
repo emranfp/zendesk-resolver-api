@@ -1303,7 +1303,7 @@ async function resolveBsc(txid) {
         explorer_link: `https://bscscan.com/tx/${txid}`,
         from: tx.from || null,
         to: tokenFromReceipt.to || tx.to || null,
-        amount: formatUnitsFromBase(tx.value, 18)
+        amount: tokenFromReceipt.amount || formatUnitsFromBase(tx.value, 18)
       };
     }
 
@@ -1419,7 +1419,7 @@ async function resolvePolygon(txid) {
         explorer_link: `https://polygonscan.com/tx/${txid}`,
         from: tx.from || null,
         to: tokenFromReceipt.to || tx.to || null,
-        amount: formatUnitsFromBase(tx.value, 18)
+        amount: tokenFromReceipt.amount || formatUnitsFromBase(tx.value, 18)
       };
     }
 
@@ -1598,7 +1598,7 @@ async function resolveOpbnb(txid) {
         explorer_link: `https://opbnbscan.com/tx/${txid}`,
         from: tx.from || null,
         to: tokenFromReceipt.to || tx.to || null,
-        amount: formatUnitsFromBase(tx.value, 18)
+        amount: tokenFromReceipt.amount || formatUnitsFromBase(tx.value, 18)
       };
     }
 
