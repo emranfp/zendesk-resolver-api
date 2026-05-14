@@ -2980,6 +2980,29 @@ if (require.main === module) {
   startServer();
 }
 
+// Ensure Zendesk app clients never get HTML error pages.
+app.use((req, res, next) => {
+  if (req.path && req.path.startsWith("/zendesk/")) {
+    return res.status(404).json({
+      version: APP_VERSION,
+      status: "NOT_FOUND",
+      message: "Zendesk endpoint not found"
+    });
+  }
+  return next();
+});
+
+app.use((err, req, res, next) => {
+  if (req.path && req.path.startsWith("/zendesk/")) {
+    return res.status(500).json({
+      version: APP_VERSION,
+      status: "ERROR",
+      message: err && err.message ? err.message : "Internal server error"
+    });
+  }
+  return next(err);
+});
+
 module.exports = {
   app,
   startServer
