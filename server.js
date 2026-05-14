@@ -59,6 +59,7 @@ const IS_PRODUCTION = NODE_ENV === "production";
 const INTERNAL_API_KEY = String(process.env.INTERNAL_API_KEY || "");
 
 const USDT_ETH_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7";
+const USDC_ETH_CONTRACT = "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 const USDT_BSC_CONTRACT = "0x55d398326f99059ff775485246999027b3197955";
 const USDC_BSC_CONTRACT = "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d";
 const USDT_POLYGON_CONTRACT = "0xc2132d05d31c914a87c6611c10748aeb04b58e8f";
@@ -707,6 +708,31 @@ function detectSolanaToken(tx) {
   return { token: "UNKNOWN", token_standard: "UNKNOWN", amount: null };
 }
 
+function getKnownTokenDecimalsByContract(network, contractAddress) {
+  const contract = String(contractAddress || "").toLowerCase();
+  if (network === "Ethereum") {
+    if (contract === USDT_ETH_CONTRACT.toLowerCase()) return 6;
+    if (contract === USDC_ETH_CONTRACT.toLowerCase()) return 6;
+  }
+  if (network === "BSC") {
+    if (contract === USDT_BSC_CONTRACT) return 18;
+    if (contract === USDC_BSC_CONTRACT) return 18;
+  }
+  if (network === "Polygon") {
+    if (contract === USDT_POLYGON_CONTRACT) return 6;
+    if (contract === USDC_POLYGON_CONTRACT) return 6;
+    if (contract === USDC_POLYGON_NATIVE_CONTRACT) return 6;
+  }
+  return null;
+}
+
+function extractAmountFromTransferLog(network, transferLog) {
+  if (!transferLog || typeof transferLog !== "object") return null;
+  const decimals = getKnownTokenDecimalsByContract(network, transferLog.address);
+  if (decimals === null) return null;
+  return formatUnitsFromBase(transferLog.data, decimals);
+}
+
 function getSolanaFromTo(tx) {
   const message = tx && tx.transaction && tx.transaction.message ? tx.transaction.message : null;
   const instructions = Array.isArray(message && message.instructions) ? message.instructions : [];
@@ -868,14 +894,16 @@ async function detectEvmTokenFromReceipt({ chainId, network, txid }) {
     return {
       token: "UNKNOWN",
       token_standard: network === "BSC" ? "BEP20" : "ERC20",
-      to: transferRecipient
+      to: transferRecipient,
+      amount: extractAmountFromTransferLog(network, transferLog)
     };
   }
 
   return {
     token: contractSymbol,
     token_standard: network === "BSC" ? "BEP20" : "ERC20",
-    to: transferRecipient
+    to: transferRecipient,
+    amount: extractAmountFromTransferLog(network, transferLog)
   };
 }
 
@@ -904,7 +932,10 @@ async function detectEthereumTokenSimple(txid, tx) {
       token: "USDT",
       token_standard: "ERC20",
       to: (tokenFromReceipt && tokenFromReceipt.to) || tx.to || null,
-      amount: extractAmountFromTransfer(directTransfer)
+      amount:
+        extractAmountFromTransfer(directTransfer) ||
+        (tokenFromReceipt && tokenFromReceipt.amount) ||
+        null
     };
   }
 
