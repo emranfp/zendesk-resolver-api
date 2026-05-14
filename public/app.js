@@ -202,6 +202,13 @@ function toWalletStepHtml(res) {
 }
 
 const API_KEY_STORAGE_KEY = "resolver_ui_api_key";
+let latestResolved = {
+  network: null,
+  token: null,
+  to_address: null,
+  amount: null,
+  txid: null
+};
 
 function getApiKey() {
   return $("apiKey").value.trim();
@@ -288,13 +295,25 @@ async function runResolve(ticketId, txid) {
     body: JSON.stringify(body)
   });
   const data = await res.json();
+  latestResolved = {
+    network: data.network || null,
+    token: data.token || null,
+    to_address: data.to_address || null,
+    amount: data.amount || null,
+    txid: data.txid || txid || null
+  };
   setOutputs({ method: "POST", url, body }, data);
   setResolveStepOutput(data);
 }
 
 async function runWallet(ticketId, message) {
   const url = `/zendesk/wallet-reply`;
-  const body = { ticket_id: ticketId, message };
+  const body = { message, user_message: message };
+  if (ticketId) {
+    body.ticket_id = ticketId;
+  }
+  if (latestResolved.network) body.actual_network = latestResolved.network;
+  if (latestResolved.to_address) body.actual_wallet = latestResolved.to_address;
 
   setOutputs({ method: "POST", url, body }, null);
 
@@ -310,12 +329,22 @@ async function runWallet(ticketId, message) {
 
 async function runConfirmoInput(ticketId, invoiceId, expectedAssetNetwork, expectedWalletAddress) {
   const url = `/zendesk/confirmo-input`;
+  const expected = String(expectedAssetNetwork || "").trim();
+  const paren = expected.match(/^(.+?)\s*\((.+)\)$/);
+  const expectedAsset = paren ? paren[1].trim() : "";
+  const expectedNetwork = paren ? paren[2].trim() : "";
   const body = {
-    ticket_id: ticketId,
-    confirmo_invoice_id: invoiceId,
     expected_asset_network: expectedAssetNetwork,
-    expected_wallet_address: expectedWalletAddress
+    expected_asset: expectedAsset || expected,
+    expected_network: expectedNetwork,
+    expected_wallet: expectedWalletAddress,
+    expected_wallet_address: expectedWalletAddress,
+    actual_network: latestResolved.network,
+    actual_token: latestResolved.token,
+    actual_wallet: latestResolved.to_address
   };
+  if (ticketId) body.ticket_id = ticketId;
+  if (invoiceId) body.confirmo_invoice_id = invoiceId;
 
   setOutputs({ method: "POST", url, body }, null);
 

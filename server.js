@@ -124,6 +124,13 @@ const CHAINLINK_BNB_USD_FEED = "0x0567f2323251f0aab15c8dfb1967e4e8a7d42aee";
 
 const TICKETS_STORE_PATH = path.join(__dirname, "data", "tickets-store.json");
 const tickets = loadTicketsFromDisk();
+const standaloneSession = {
+  txid: null,
+  actual_network: null,
+  actual_token: null,
+  actual_wallet: null,
+  actual_amount: null
+};
 
 const zendesk = createZendeskClient();
 
@@ -296,10 +303,10 @@ function validateConfirmoInputBody(req, res, next) {
   const normalizedNetwork = normalizeExpectedNetworkName(expectedNetworkRaw || parsed.network);
   const normalizedToken = normalizeExpectedTokenName(expectedTokenRaw || parsed.token);
 
-  if (!hasNonEmptyString(ticketId)) {
+  if (req.authMode !== "standalone" && !hasNonEmptyString(ticketId)) {
     return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
   }
-  if (!hasNonEmptyString(confirmoInvoiceId)) {
+  if (req.authMode !== "standalone" && !hasNonEmptyString(confirmoInvoiceId)) {
     return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing confirmo_invoice_id" });
   }
   if (!hasNonEmptyString(expectedWalletAddress)) {
@@ -317,10 +324,10 @@ function validateConfirmoInputBody(req, res, next) {
 
 function validateWalletReplyBody(req, res, next) {
   const ticketId = req.body && req.body.ticket_id;
-  const hasMessage = hasNonEmptyString(req.body && req.body.message);
+  const hasMessage = hasNonEmptyString(req.body && (req.body.message || req.body.user_message));
   const hasRefundWallet = hasNonEmptyString(req.body && req.body.refund_wallet);
 
-  if (!hasNonEmptyString(ticketId)) {
+  if (req.authMode !== "standalone" && !hasNonEmptyString(ticketId)) {
     return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
   }
   if (!hasMessage && !hasRefundWallet) {
@@ -2191,6 +2198,11 @@ app.post("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicket
   try {
     if (req.authMode === "standalone") {
       const result = await resolveTransaction(txid);
+      standaloneSession.txid = String(txid);
+      standaloneSession.actual_network = result.network || null;
+      standaloneSession.actual_token = result.token || null;
+      standaloneSession.actual_wallet = result.to || null;
+      standaloneSession.actual_amount = result.amount || null;
       return res.json({
         network: result.network || null,
         token: result.token || null,
@@ -2289,6 +2301,11 @@ app.get("/zendesk/payment-ticket", requireInternalApiKey, validatePaymentTicketB
   try {
     if (req.authMode === "standalone") {
       const result = await resolveTransaction(txid);
+      standaloneSession.txid = String(txid);
+      standaloneSession.actual_network = result.network || null;
+      standaloneSession.actual_token = result.token || null;
+      standaloneSession.actual_wallet = result.to || null;
+      standaloneSession.actual_amount = result.amount || null;
       return res.json({
         network: result.network || null,
         token: result.token || null,
@@ -2362,6 +2379,11 @@ app.post("/api/resolve-transaction", requireInternalApiKey, async (req, res) => 
       return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing txid" });
     }
     const result = await resolveTransaction(txid);
+    standaloneSession.txid = String(txid);
+    standaloneSession.actual_network = result.network || null;
+    standaloneSession.actual_token = result.token || null;
+    standaloneSession.actual_wallet = result.to || null;
+    standaloneSession.actual_amount = result.amount || null;
     if (!result || result.status !== "FOUND") {
       return res.json({ network: null, token: null, amount: null, to_address: null, txid: String(txid || "") });
     }
@@ -2384,7 +2406,7 @@ app.post("/api/resolve-transaction", requireInternalApiKey, async (req, res) => 
 // Ops manual Confirmo input (v1)
 // Input: { ticket_id, confirmo_invoice_id, expected_asset_network, expected_wallet_address }
 app.post("/zendesk/confirmo-input", requireInternalApiKey, validateConfirmoInputBody, async (req, res) => {
-  const ticketId = req.body.ticket_id;
+  const ticketId = req.body.ticket_id ? String(req.body.ticket_id) : "";
   const confirmoInvoiceId = req.body.confirmo_invoice_id;
   let expectedNetwork = req.body.expected_network;
   let expectedToken = req.body.expected_token;
@@ -2401,18 +2423,23 @@ app.post("/zendesk/confirmo-input", requireInternalApiKey, validateConfirmoInput
     expectedToken = expectedToken || parsed.token;
   }
 
-  if (!ticketId) {
-    return res.json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
-  }
+  const isStandalone = !ticketId;
+  const stored = isStandalone ? null : upsertTicket(ticketId);
+  const actualNetworkFromBody = req.body.actual_network || null;
+  const actualTokenFromBody = req.body.actual_token || null;
+  const actualWalletFromBody = req.body.actual_wallet || req.body.actual_to_address || req.body.actual_to || null;
 
-  const stored = upsertTicket(ticketId);
+  const actualNetwork = (stored && stored.actual_network) || actualNetworkFromBody || standaloneSession.actual_network;
+  const actualToken = (stored && stored.actual_token) || actualTokenFromBody || standaloneSession.actual_token;
+  const actualWallet = (stored && stored.receiver) || actualWalletFromBody || standaloneSession.actual_wallet;
+  const resolverStatus = actualNetwork ? "FOUND" : "NOT_FOUND";
 
-  if (!stored.txid || !stored.actual_network) {
+  if (!actualNetwork || !actualToken || !actualWallet) {
     return res.json({
       version: APP_VERSION,
       status: "MISSING_RESOLVER_DATA",
-      ticket_id: ticketId,
-      stored_ticket: stored,
+      ticket_id: ticketId || null,
+      stored_ticket: stored || null,
       zendesk_tags: ["crypto_confirmo_input_blocked"],
       zendesk_internal_note:
         "Confirmo input received, but resolver data is missing. Run /zendesk/payment-ticket first.",
@@ -2420,45 +2447,53 @@ app.post("/zendesk/confirmo-input", requireInternalApiKey, validateConfirmoInput
     });
   }
 
-  if (!confirmoInvoiceId || !expectedNetwork || !expectedToken || !expectedWalletAddress) {
+  if (!expectedNetwork || !expectedToken || !expectedWalletAddress) {
     return res.json({
       version: APP_VERSION,
       status: "ERROR",
-      message:
-        "Missing confirmo_invoice_id / expected_asset_network / expected_wallet_address",
-      ticket_id: ticketId
+      message: "Missing expected_asset_network / expected_wallet_address",
+      ticket_id: ticketId || null
     });
   }
 
-  stored.confirmo_invoice_id = String(confirmoInvoiceId);
-  stored.expected_network = normalizeExpectedNetworkName(expectedNetwork);
-  stored.expected_token = normalizeExpectedTokenName(expectedToken);
-  stored.expected_wallet_address = String(expectedWalletAddress);
+  const expectedNetworkNormalized = normalizeExpectedNetworkName(expectedNetwork);
+  const expectedTokenNormalized = normalizeExpectedTokenName(expectedToken);
+  const expectedWallet = String(expectedWalletAddress);
 
-  const expected = { network: stored.expected_network, token: stored.expected_token };
+  const expected = { network: expectedNetworkNormalized, token: expectedTokenNormalized };
   const actual = {
-    status: stored.resolver_status,
-    network: stored.actual_network,
-    token: stored.actual_token
+    status: resolverStatus,
+    network: actualNetwork,
+    token: actualToken
   };
   const matchResult = computeMatchDetails({
     expected,
     actual,
-    expectedWallet: stored.expected_wallet_address,
-    actualReceiver: stored.receiver
+    expectedWallet,
+    actualReceiver: actualWallet
   });
   const matchStatus = matchResult.status;
-  stored.match_status = matchStatus;
-  stored.wallet_match = matchResult.wallet_match;
-  stored.network_match = matchResult.network_match;
-  stored.token_match = matchResult.token_match;
-  stored.asset_network_match = matchResult.asset_network_match;
-  stored.needs_wallet = !matchResult.wallet_match || !matchResult.asset_network_match;
-  stored.updated_at = new Date().toISOString();
-  saveTicketState(ticketId, stored);
+  const isSuccess = Boolean(
+    matchResult.wallet_match && matchResult.network_match && matchResult.token_match
+  );
+
+  if (stored) {
+    stored.confirmo_invoice_id = confirmoInvoiceId ? String(confirmoInvoiceId) : null;
+    stored.expected_network = expectedNetworkNormalized;
+    stored.expected_token = expectedTokenNormalized;
+    stored.expected_wallet_address = expectedWallet;
+    stored.match_status = matchStatus;
+    stored.wallet_match = matchResult.wallet_match;
+    stored.network_match = matchResult.network_match;
+    stored.token_match = matchResult.token_match;
+    stored.asset_network_match = matchResult.asset_network_match;
+    stored.needs_wallet = !matchResult.wallet_match || !matchResult.asset_network_match;
+    stored.updated_at = new Date().toISOString();
+    saveTicketState(ticketId, stored);
+  }
 
   const tags = getZendeskTags(matchStatus).concat(["crypto_confirmo_expected_received"]);
-  const internalNote = buildConfirmoMatchInternalNote(stored);
+  const internalNote = stored ? buildConfirmoMatchInternalNote(stored) : "Standalone comparison completed.";
 
   const publicReply =
     matchStatus === "payment_valid"
@@ -2471,22 +2506,35 @@ app.post("/zendesk/confirmo-input", requireInternalApiKey, validateConfirmoInput
           ? getEmailToUser("tx_not_found")
           : null;
 
-  const zendesk_update = await updateZendeskForTicket(ticketId, {
-    tags,
-    internalNote,
-    publicReply
-  });
+  const zendesk_update = stored
+    ? await updateZendeskForTicket(ticketId, {
+        tags,
+        internalNote,
+        publicReply
+      })
+    : { enabled: false, skipped: true, reason: "standalone_mode_no_ticket" };
 
   return res.json({
     version: APP_VERSION,
-    status: "CONFIRMO_INPUT_PROCESSED",
+    status: isSuccess ? "SUCCESS" : "CONFIRMO_INPUT_PROCESSED",
     zendesk_enabled: zendesk.enabled,
-    ticket_id: ticketId,
-    saved_ticket_memory: stored,
+    ticket_id: ticketId || null,
+    saved_ticket_memory: stored || null,
     match_status: matchStatus,
     match_result: matchResult,
+    wallet_match: Boolean(matchResult.wallet_match),
+    network_match: Boolean(matchResult.network_match),
+    asset_match: Boolean(matchResult.token_match),
+    comparison: {
+      expected_network: expectedNetworkNormalized,
+      expected_asset: expectedTokenNormalized,
+      expected_wallet: expectedWallet,
+      actual_network: actualNetwork,
+      actual_asset: actualToken,
+      actual_wallet: actualWallet
+    },
     zendesk_update,
-    next_action: stored.needs_wallet
+    next_action: (stored ? stored.needs_wallet : !isSuccess)
       ? "wait_for_wallet_reply"
       : matchStatus === "funds_lost_wrong_asset"
         ? "close_case_funds_lost"
@@ -2497,15 +2545,46 @@ app.post("/zendesk/confirmo-input", requireInternalApiKey, validateConfirmoInput
 // Wallet reply from user (v1)
 // Input: { ticket_id, message } OR { ticket_id, refund_wallet }
 app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody, async (req, res) => {
-  const ticketId = req.body.ticket_id;
-  const message = req.body.message;
+  const ticketId = req.body.ticket_id ? String(req.body.ticket_id) : "";
+  const message = req.body.message || req.body.user_message;
   const refundWallet = req.body.refund_wallet;
+  const actualWalletInput = req.body.actual_wallet || req.body.actual_to_address || null;
 
-  if (!ticketId) {
-    return res.json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
+  const isStandalone = !ticketId;
+  const stored = isStandalone ? null : upsertTicket(ticketId);
+  const actualWallet =
+    actualWalletInput || (stored && stored.receiver) || standaloneSession.actual_wallet || null;
+  const resolvedNetwork =
+    (stored && (stored.expected_network || stored.actual_network)) ||
+    req.body.actual_network ||
+    standaloneSession.actual_network ||
+    "Ethereum";
+
+  if (isStandalone) {
+    const walletCandidate = refundWallet || extractWalletFromMessage(resolvedNetwork, message || "");
+    if (!walletCandidate) {
+      return res.json({
+        version: APP_VERSION,
+        status: "NO_WALLET_FOUND",
+        wallet_verification: "NO_WALLET_FOUND",
+        next_action: "ask_user_for_wallet_again"
+      });
+    }
+    const formatCheck = validateWalletFormat(resolvedNetwork, walletCandidate);
+    const walletMatch =
+      hasNonEmptyString(actualWallet) &&
+      normalizeWalletForCompare(actualWallet, resolvedNetwork) ===
+        normalizeWalletForCompare(walletCandidate, resolvedNetwork);
+    return res.json({
+      version: APP_VERSION,
+      status: "WALLET_REPLY_PROCESSED",
+      wallet_verification: walletMatch ? "MATCH" : "MISMATCH",
+      actual_wallet: actualWallet,
+      extracted_wallet: walletCandidate,
+      format_check: formatCheck,
+      next_action: walletMatch ? "wallet_verified" : "ask_user_for_correct_wallet"
+    });
   }
-
-  const stored = upsertTicket(ticketId);
 
   if (!stored.needs_wallet) {
     return res.json({
