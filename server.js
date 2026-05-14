@@ -87,6 +87,7 @@ const EVM_RPC_URLS = {
 const SOLANA_RPC_URLS = ["https://api.mainnet-beta.solana.com", "https://solana-rpc.publicnode.com"];
 const SOLANA_USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoN3dV5fVYwSdhLkY6";
 const SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const CHAINLINK_ETH_USD_FEED = "0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419";
 
 const TICKETS_STORE_PATH = path.join(__dirname, "data", "tickets-store.json");
 const tickets = loadTicketsFromDisk();
@@ -788,6 +789,24 @@ async function fetchUsdPriceForToken(network, token) {
       const response = await http.get(ethPriceUrl, AXIOS_HTTP_OPTIONS);
       const ethusd = response.data && response.data.result ? Number(response.data.result.ethusd) : null;
       if (Number.isFinite(ethusd) && ethusd > 0) return ethusd;
+    } catch (error) {
+      // no more fallbacks
+    }
+  }
+
+  // Source 5: On-chain Chainlink ETH/USD oracle via public Ethereum RPC.
+  if (t === "ETH") {
+    // latestAnswer() selector: 0x50d25bcd
+    try {
+      const raw = await callJsonRpc(EVM_RPC_URLS.Ethereum[0], "eth_call", [
+        { to: CHAINLINK_ETH_USD_FEED, data: "0x50d25bcd" },
+        "latest"
+      ]);
+      if (raw && typeof raw === "string" && raw !== "0x") {
+        const asInt = BigInt(raw);
+        const usd = Number(asInt) / 1e8; // Chainlink ETH/USD has 8 decimals
+        if (Number.isFinite(usd) && usd > 0) return usd;
+      }
     } catch (error) {
       // no more fallbacks
     }
