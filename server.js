@@ -2089,6 +2089,18 @@ function extractWalletFromMessage(network, message) {
     }
   }
 
+  // Fallback extraction across all supported formats.
+  const evmAny = message.match(/0x[a-fA-F0-9]{40}/);
+  if (evmAny) return evmAny[0];
+  const tronAny = message.match(/T[1-9A-HJ-NP-Za-km-z]{33}/);
+  if (tronAny) return tronAny[0];
+  const solAny = message.match(/[1-9A-HJ-NP-Za-km-z]{32,44}/g) || [];
+  for (const m of solAny) {
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(m)) {
+      return m;
+    }
+  }
+
   return null;
 }
 
