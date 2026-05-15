@@ -409,6 +409,12 @@ function formatUnitsFromBase(valueLike, decimals) {
     if (valueLike === null || valueLike === undefined) return null;
     const raw = String(valueLike).trim();
     if (!raw) return null;
+    // Some providers (notably Tron APIs) already return UI decimal strings.
+    // In that case, pass through normalized numeric text directly.
+    if (/^-?\d+(\.\d+)?$/.test(raw) && raw.includes(".")) {
+      const normalized = raw.replace(/\.?0+$/, "");
+      return normalized === "" ? "0" : normalized;
+    }
     const base = raw.startsWith("0x") || raw.startsWith("0X") ? BigInt(raw) : BigInt(raw.replace(/[^\d-]/g, ""));
     const scale = Number.isFinite(Number(decimals)) ? Number(decimals) : 0;
     if (!Number.isInteger(scale) || scale < 0) return base.toString();
@@ -427,8 +433,20 @@ function formatUnitsFromBase(valueLike, decimals) {
 
 function extractAmountFromTransfer(transfer) {
   if (!transfer || typeof transfer !== "object") return null;
-  const raw = transfer.value ?? transfer.amount ?? transfer.amount_str ?? transfer.quant ?? null;
-  const decimals = transfer.tokenDecimal ?? transfer.token_decimals ?? transfer.decimals ?? 0;
+  const raw =
+    transfer.value ??
+    transfer.amount ??
+    transfer.amount_str ??
+    transfer.quant ??
+    (transfer.tokenAmount && transfer.tokenAmount.amount) ??
+    null;
+  const decimals =
+    transfer.tokenDecimal ??
+    transfer.token_decimals ??
+    transfer.decimals ??
+    (transfer.tokenInfo && (transfer.tokenInfo.tokenDecimal ?? transfer.tokenInfo.decimals)) ??
+    (transfer.tokenAmount && transfer.tokenAmount.decimals) ??
+    0;
   return formatUnitsFromBase(raw, decimals);
 }
 
@@ -2131,6 +2149,19 @@ function inferMentionedNetworkFromText(text) {
   return null;
 }
 
+function getExplorerAddressUrl(network, wallet) {
+  const n = String(network || "");
+  const w = String(wallet || "");
+  if (!w) return null;
+  if (n === "Ethereum") return `https://etherscan.io/address/${w}`;
+  if (n === "BSC") return `https://bscscan.com/address/${w}`;
+  if (n === "Polygon") return `https://polygonscan.com/address/${w}`;
+  if (n === "opBNB") return `https://opbnbscan.com/address/${w}`;
+  if (n === "Tron") return `https://tronscan.org/#/address/${w}`;
+  if (n === "Solana") return `https://solscan.io/account/${w}`;
+  return null;
+}
+
 async function checkEvmWalletOnChain(network, wallet) {
   const urls = EVM_RPC_URLS[network] || [];
   for (const rpcUrl of urls) {
@@ -2669,23 +2700,19 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
       return res.json({
         status: "SUCCESS",
         valid_on_chain: false,
-        wallet_ready: false
+        explorer_url: null,
+        reason: "Address not found on-chain"
       });
     }
     const formatCheck = validateWalletFormat(resolvedNetwork, walletCandidate);
-    const walletMatch =
-      hasNonEmptyString(actualWallet) &&
-      normalizeWalletForCompare(actualWallet, resolvedNetwork) ===
-        normalizeWalletForCompare(walletCandidate, resolvedNetwork);
     const chainCheck = formatCheck.valid
       ? await validateWalletExistsOnChain(resolvedNetwork, walletCandidate)
-      : { exists: false, details: "invalid_wallet_format" };
+      : { exists: false, details: "Address not found on-chain" };
     return res.json({
       status: "SUCCESS",
       valid_on_chain: Boolean(formatCheck.valid && chainCheck.exists),
-      wallet_ready: Boolean(formatCheck.valid && chainCheck.exists),
-      wallet_verification: walletMatch ? "MATCH" : "MISMATCH",
-      extracted_wallet: walletCandidate
+      explorer_url: getExplorerAddressUrl(resolvedNetwork, walletCandidate),
+      reason: formatCheck.valid && chainCheck.exists ? undefined : "Address not found on-chain"
     });
   }
 
@@ -2708,10 +2735,8 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
     return res.json({
       status: "SUCCESS",
       valid_on_chain: false,
-      wallet_ready: false,
-      ticket_id: ticketId,
-      extracted_wallet: walletCandidate || null,
-      validation_network_used: network
+      explorer_url: getExplorerAddressUrl(network, walletCandidate || ""),
+      reason: "Address not found on-chain"
     });
   }
 
@@ -2719,8 +2744,8 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
     return res.json({
       status: "SUCCESS",
       valid_on_chain: false,
-      wallet_ready: false,
-      ticket_id: ticketId
+      explorer_url: null,
+      reason: "Address not found on-chain"
     });
   }
 
@@ -2741,10 +2766,8 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
   return res.json({
     status: "SUCCESS",
     valid_on_chain: Boolean(walletReadyForRecovery),
-    wallet_ready: Boolean(walletReadyForRecovery),
-    ticket_id: ticketId,
-    extracted_wallet: walletCandidate,
-    validation_network_used: network
+    explorer_url: getExplorerAddressUrl(network, walletCandidate),
+    reason: walletReadyForRecovery ? undefined : "Address not found on-chain"
   });
 });
 
