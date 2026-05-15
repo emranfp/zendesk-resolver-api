@@ -2119,6 +2119,18 @@ function inferNetworkFromWallet(wallet, fallbackNetwork) {
   return fallbackNetwork;
 }
 
+function inferMentionedNetworkFromText(text) {
+  const t = String(text || "").toLowerCase();
+  if (!t) return null;
+  if (/\bethereum\b|\beth\b|\berc20\b/.test(t)) return "Ethereum";
+  if (/\bpolygon\b|\bmatic\b/.test(t)) return "Polygon";
+  if (/\bbsc\b|\bbinance smart chain\b|\bbnb smart chain\b|\bbep20\b/.test(t)) return "BSC";
+  if (/\btron\b|\btrx\b|\btrc20\b/.test(t)) return "Tron";
+  if (/\bsolana\b|\bsol\b|\bspl\b/.test(t)) return "Solana";
+  if (/\bopbnb\b/.test(t)) return "opBNB";
+  return null;
+}
+
 async function checkEvmWalletOnChain(network, wallet) {
   const urls = EVM_RPC_URLS[network] || [];
   for (const rpcUrl of urls) {
@@ -2691,6 +2703,17 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
   const baseNetwork = stored.actual_network || stored.expected_network || resolvedNetwork;
   const walletCandidate = refundWallet || extractWalletFromMessage(baseNetwork, message || "");
   const network = stored.actual_network || inferNetworkFromWallet(walletCandidate, baseNetwork);
+  const mentionedNetwork = inferMentionedNetworkFromText(message || "");
+  if (mentionedNetwork && network && mentionedNetwork !== network) {
+    return res.json({
+      status: "SUCCESS",
+      valid_on_chain: false,
+      wallet_ready: false,
+      ticket_id: ticketId,
+      extracted_wallet: walletCandidate || null,
+      validation_network_used: network
+    });
+  }
 
   if (!walletCandidate) {
     return res.json({
