@@ -2690,7 +2690,7 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
   // Validate wallet against the chain where payment actually landed.
   const baseNetwork = stored.actual_network || stored.expected_network || resolvedNetwork;
   const walletCandidate = refundWallet || extractWalletFromMessage(baseNetwork, message || "");
-  const network = inferNetworkFromWallet(walletCandidate, baseNetwork);
+  const network = stored.actual_network || inferNetworkFromWallet(walletCandidate, baseNetwork);
 
   if (!walletCandidate) {
     const tags = ["crypto_wallet_missing"];
@@ -2760,6 +2760,7 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
     ticket_id: ticketId,
     stored_ticket: stored,
     extracted_wallet: walletCandidate,
+    validation_network_used: network,
     format_check: formatCheck,
     chain_check: chainCheck,
     wallet_ready_for_recovery: walletReadyForRecovery,
