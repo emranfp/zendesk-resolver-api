@@ -2662,7 +2662,7 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
     });
   }
 
-  if (!stored.needs_wallet) {
+  if (!stored.needs_wallet && !hasNonEmptyString(refundWallet) && !hasNonEmptyString(message)) {
     return res.json({
       version: APP_VERSION,
       status: "WALLET_NOT_REQUIRED",
