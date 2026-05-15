@@ -2620,7 +2620,7 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
     return res.json({
       status: "SUCCESS",
       exists: Boolean(result.exists),
-      details: result.exists ? "Wallet validated on chain" : result.details
+      ready: Boolean(result.exists)
     });
   }
 
