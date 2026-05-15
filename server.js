@@ -2017,8 +2017,8 @@ function validateWalletFormat(network, wallet) {
     };
   }
 
-  if (network === "Ethereum" || network === "BSC" || network === "Polygon") {
-    if (wallet.startsWith("0x") && wallet.length === 42) {
+  if (network === "Ethereum" || network === "BSC" || network === "Polygon" || network === "opBNB") {
+    if (/^0x[a-fA-F0-9]{40}$/.test(wallet)) {
       return {
         valid: true,
         reason: "valid_evm_wallet_format"
@@ -2672,7 +2672,8 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
     });
   }
 
-  const network = stored.expected_network || stored.actual_network;
+  // Validate wallet against the chain where payment actually landed.
+  const network = stored.actual_network || stored.expected_network;
   const walletCandidate = refundWallet || extractWalletFromMessage(network, message || "");
 
   if (!walletCandidate) {
@@ -2701,15 +2702,14 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
 
   const formatCheck = validateWalletFormat(network, walletCandidate);
 
-  let chainCheck = { checked: false, reason: "chain_check_not_run" };
-  if (formatCheck.valid && network === "Ethereum") {
-    chainCheck = await checkEthereumWalletOnChain(walletCandidate);
-  } else if (formatCheck.valid && (network === "BSC" || network === "Polygon")) {
-    chainCheck = await checkEvmWalletOnChain(network, walletCandidate);
-  } else if (formatCheck.valid && network === "Tron") {
-    chainCheck = await checkTronWalletOnChain(walletCandidate);
-  } else if (formatCheck.valid && network === "Solana") {
-    chainCheck = await checkSolanaWalletOnChain(walletCandidate);
+  let chainCheck = { checked: false, valid_on_chain: false, reason: "chain_check_not_run" };
+  if (formatCheck.valid) {
+    const existsResult = await validateWalletExistsOnChain(network, walletCandidate);
+    chainCheck = {
+      checked: true,
+      valid_on_chain: Boolean(existsResult.exists),
+      reason: existsResult.details
+    };
   }
 
   const walletReadyForRecovery = formatCheck.valid && chainCheck.valid_on_chain === true;
