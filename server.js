@@ -2104,6 +2104,21 @@ function extractWalletFromMessage(network, message) {
   return null;
 }
 
+function inferNetworkFromWallet(wallet, fallbackNetwork) {
+  const w = String(wallet || "").trim();
+  if (/^0x[a-fA-F0-9]{40}$/.test(w)) {
+    // Default EVM fallback to Ethereum when exact chain is unknown.
+    return "Ethereum";
+  }
+  if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(w)) {
+    return "Tron";
+  }
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(w)) {
+    return "Solana";
+  }
+  return fallbackNetwork;
+}
+
 async function checkEvmWalletOnChain(network, wallet) {
   const urls = EVM_RPC_URLS[network] || [];
   for (const rpcUrl of urls) {
@@ -2673,8 +2688,9 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
   }
 
   // Validate wallet against the chain where payment actually landed.
-  const network = stored.actual_network || stored.expected_network;
-  const walletCandidate = refundWallet || extractWalletFromMessage(network, message || "");
+  const baseNetwork = stored.actual_network || stored.expected_network || resolvedNetwork;
+  const walletCandidate = refundWallet || extractWalletFromMessage(baseNetwork, message || "");
+  const network = inferNetworkFromWallet(walletCandidate, baseNetwork);
 
   if (!walletCandidate) {
     const tags = ["crypto_wallet_missing"];
