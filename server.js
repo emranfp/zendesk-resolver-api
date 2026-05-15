@@ -328,11 +328,13 @@ function validateWalletReplyBody(req, res, next) {
     req.body && (req.body.validation_step || req.body.validate_only || req.body.mode === "validate_wallet")
   );
   const hasMessage = hasNonEmptyString(req.body && (req.body.message || req.body.user_message));
-  const hasRefundWallet = hasNonEmptyString(req.body && req.body.refund_wallet);
-  const hasAddress = hasNonEmptyString(req.body && (req.body.address || req.body.wallet));
+  const hasRefundWallet = hasNonEmptyString(req.body && (req.body.refund_wallet || req.body.wallet_address));
+  const hasAddress = hasNonEmptyString(
+    req.body && (req.body.address || req.body.wallet || req.body.wallet_address)
+  );
 
   if (!isValidationStep && req.authMode !== "standalone" && !hasNonEmptyString(ticketId)) {
-    return res.status(400).json({ version: APP_VERSION, status: "ERROR", message: "Missing ticket_id" });
+    console.log("wallet-reply guardrail: ticket_id missing, continuing as N/A");
   }
   if (isValidationStep && !hasMessage && !hasRefundWallet && !hasAddress) {
     return res.status(400).json({
@@ -2558,7 +2560,7 @@ app.post("/zendesk/confirmo-input", requireInternalApiKey, validateConfirmoInput
 app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody, async (req, res) => {
   const ticketId = req.body.ticket_id ? String(req.body.ticket_id) : "";
   const message = req.body.message || req.body.user_message;
-  const refundWallet = req.body.refund_wallet;
+  const refundWallet = req.body.refund_wallet || req.body.wallet_address;
   const address = req.body.address || req.body.wallet;
   const actualWalletInput = req.body.actual_wallet || req.body.actual_to_address || null;
 
@@ -2574,9 +2576,11 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
     standaloneSession.actual_network ||
     "Ethereum";
   const validationStep = Boolean(req.body.validation_step || req.body.validate_only || req.body.mode === "validate_wallet");
+  console.log("wallet-reply ticket_id:", ticketId || "N/A");
 
   if (validationStep) {
-    const walletCandidate = address || refundWallet || extractWalletFromMessage(resolvedNetwork, message || "");
+    const walletCandidate =
+      req.body.wallet_address || address || refundWallet || extractWalletFromMessage(resolvedNetwork, message || "");
     const formatCheck = validateWalletFormat(resolvedNetwork, walletCandidate || "");
     if (!formatCheck.valid) {
       return res.status(400).json({
@@ -2584,11 +2588,16 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
         message: "Invalid address format"
       });
     }
-    const result = await validateWalletExistsOnChain(resolvedNetwork, walletCandidate);
+    let result = { exists: false, details: "Address lookup failed" };
+    try {
+      result = await validateWalletExistsOnChain(resolvedNetwork, walletCandidate);
+    } catch (error) {
+      result = { exists: false, details: "Address lookup failed" };
+    }
     return res.json({
       status: "SUCCESS",
       exists: Boolean(result.exists),
-      details: result.details
+      details: result.exists ? "Wallet validated on chain" : result.details
     });
   }
 
