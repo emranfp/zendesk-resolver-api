@@ -2655,10 +2655,9 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
     const walletCandidate = refundWallet || extractWalletFromMessage(resolvedNetwork, message || "");
     if (!walletCandidate) {
       return res.json({
-        version: APP_VERSION,
-        status: "NO_WALLET_FOUND",
-        wallet_verification: "NO_WALLET_FOUND",
-        next_action: "ask_user_for_wallet_again"
+        status: "SUCCESS",
+        valid_on_chain: false,
+        wallet_ready: false
       });
     }
     const formatCheck = validateWalletFormat(resolvedNetwork, walletCandidate);
@@ -2666,14 +2665,15 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
       hasNonEmptyString(actualWallet) &&
       normalizeWalletForCompare(actualWallet, resolvedNetwork) ===
         normalizeWalletForCompare(walletCandidate, resolvedNetwork);
+    const chainCheck = formatCheck.valid
+      ? await validateWalletExistsOnChain(resolvedNetwork, walletCandidate)
+      : { exists: false, details: "invalid_wallet_format" };
     return res.json({
-      version: APP_VERSION,
-      status: "WALLET_REPLY_PROCESSED",
+      status: "SUCCESS",
+      valid_on_chain: Boolean(formatCheck.valid && chainCheck.exists),
+      wallet_ready: Boolean(formatCheck.valid && chainCheck.exists),
       wallet_verification: walletMatch ? "MATCH" : "MISMATCH",
-      actual_wallet: actualWallet,
-      extracted_wallet: walletCandidate,
-      format_check: formatCheck,
-      next_action: walletMatch ? "wallet_verified" : "ask_user_for_correct_wallet"
+      extracted_wallet: walletCandidate
     });
   }
 
@@ -2693,26 +2693,11 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
   const network = stored.actual_network || inferNetworkFromWallet(walletCandidate, baseNetwork);
 
   if (!walletCandidate) {
-    const tags = ["crypto_wallet_missing"];
-    const internalNote =
-      "Wallet reply received, but no wallet was found. Ask user to provide the correct refund wallet address.";
-    const publicReply =
-      "Please reply with the wallet address where you would like the refund/recovery to be sent.";
-
-    const zendesk_update = await updateZendeskForTicket(ticketId, {
-      tags,
-      internalNote,
-      publicReply
-    });
-
     return res.json({
-      version: APP_VERSION,
-      status: "NO_WALLET_FOUND",
-      zendesk_enabled: zendesk.enabled,
-      ticket_id: ticketId,
-      stored_ticket: stored,
-      zendesk_update,
-      next_action: "ask_user_for_wallet_again"
+      status: "SUCCESS",
+      valid_on_chain: false,
+      wallet_ready: false,
+      ticket_id: ticketId
     });
   }
 
@@ -2730,42 +2715,13 @@ app.post("/zendesk/wallet-reply", requireInternalApiKey, validateWalletReplyBody
 
   const walletReadyForRecovery = formatCheck.valid && chainCheck.valid_on_chain === true;
 
-  stored.refund_wallet = walletCandidate;
-  stored.wallet_ready_for_recovery = walletReadyForRecovery;
-  stored.ops_approved = false;
-  stored.confirmo_ready = walletReadyForRecovery; // v1: if wallet ok, ready for ops to submit
-  stored.confirmo_recovery_payload = walletReadyForRecovery ? buildConfirmoRecoveryPayload(stored) : null;
-  stored.updated_at = new Date().toISOString();
-  saveTicketState(ticketId, stored);
-
-  const tags = walletReadyForRecovery
-    ? ["crypto_wallet_valid", "crypto_confirmo_payload_ready", "crypto_ops_review_needed"]
-    : ["crypto_wallet_invalid", "crypto_ask_wallet_again"];
-
-  const internalNote = buildWalletFlowInternalNote(stored);
-  const publicReply = walletReadyForRecovery
-    ? "Thanks. Your refund wallet looks valid. Our team will proceed with recovery."
-    : "The wallet address looks invalid for the required network. Please send the correct refund wallet.";
-
-  const zendesk_update = await updateZendeskForTicket(ticketId, {
-    tags,
-    internalNote,
-    publicReply
-  });
-
   return res.json({
-    version: APP_VERSION,
-    status: "WALLET_REPLY_PROCESSED",
-    zendesk_enabled: zendesk.enabled,
+    status: "SUCCESS",
+    valid_on_chain: Boolean(walletReadyForRecovery),
+    wallet_ready: Boolean(walletReadyForRecovery),
     ticket_id: ticketId,
-    stored_ticket: stored,
     extracted_wallet: walletCandidate,
-    validation_network_used: network,
-    format_check: formatCheck,
-    chain_check: chainCheck,
-    wallet_ready_for_recovery: walletReadyForRecovery,
-    zendesk_update,
-    next_action: walletReadyForRecovery ? "ops_submit_confirmo_recovery" : "ask_user_for_correct_wallet"
+    validation_network_used: network
   });
 });
 
