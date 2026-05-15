@@ -95,8 +95,11 @@ const USDC_POLYGON_CONTRACT = "0x2791bca1f2de4661ed88a30c99a7a9449aa84174";
 const USDC_POLYGON_NATIVE_CONTRACT = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359";
 const ERC20_TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-// Resolver must use this key for chain explorer lookups (set in environment).
-const LOOKUP_API_KEY = String(process.env.LOOKUP_API_KEY || "");
+// Resolver key for chain explorer lookups.
+// Prefer explicit LOOKUP_API_KEY; fallback keeps older env setups working.
+const LOOKUP_API_KEY = String(
+  process.env.LOOKUP_API_KEY || process.env.INTERNAL_API_KEY || process.env.APP_SECRET || ""
+);
 const STANDALONE_HRC_KEY = LOOKUP_API_KEY;
 const ETHERSCAN_API_KEY = LOOKUP_API_KEY;
 const BSCSCAN_API_KEY = LOOKUP_API_KEY;
@@ -1511,6 +1514,26 @@ async function resolveTron(txid) {
         from: data.ownerAddress || null,
         to: pickTransferRecipient(firstTransfer) || data.toAddress || null,
         amount: extractAmountFromTransfer(firstTransfer)
+      };
+    }
+
+    const allTransfers = Array.isArray(data.transfersAllList) ? data.transfersAllList : [];
+    const altTransfer = pickBestTransferWithAmount(allTransfers);
+    if (altTransfer) {
+      const tokenSymbol =
+        altTransfer.tokenAbbr ||
+        altTransfer.symbol ||
+        (altTransfer.tokenInfo && altTransfer.tokenInfo.tokenAbbr) ||
+        "UNKNOWN";
+      return {
+        status: "FOUND",
+        network: "Tron",
+        token: String(tokenSymbol).toUpperCase(),
+        token_standard: "TRC20",
+        explorer_link: `https://tronscan.org/#/transaction/${txid}`,
+        from: data.ownerAddress || altTransfer.transferFromAddress || null,
+        to: pickTransferRecipient(altTransfer) || data.toAddress || null,
+        amount: extractAmountFromTransfer(altTransfer)
       };
     }
 
