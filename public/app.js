@@ -184,10 +184,18 @@ function toWalletStepHtml(res) {
   const line = (label, value, cls = "summary-value") =>
     `<div><span class="summary-label">${escapeHtml(label)}:</span> <span class="${cls}">${escapeHtml(value)}</span></div>`;
 
-  const formatValid = res.format_check && res.format_check.valid;
-  const chainChecked = res.chain_check && res.chain_check.checked;
-  const chainValid = res.chain_check && res.chain_check.valid_on_chain;
-  const ready = res.wallet_ready_for_recovery;
+  const formatValid =
+    (res.format_check && res.format_check.valid) ??
+    (typeof res.valid_on_chain === "boolean" ? res.valid_on_chain : undefined);
+  const chainChecked =
+    (res.chain_check && res.chain_check.checked) ??
+    (typeof res.valid_on_chain === "boolean" ? true : undefined);
+  const chainValid =
+    (res.chain_check && res.chain_check.valid_on_chain) ??
+    (typeof res.valid_on_chain === "boolean" ? res.valid_on_chain : undefined);
+  const ready =
+    res.wallet_ready_for_recovery ??
+    (typeof res.wallet_ready === "boolean" ? res.wallet_ready : undefined);
 
   return [
     line("Status", val(res.status)),
