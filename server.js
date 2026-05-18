@@ -649,6 +649,17 @@ async function fetchTronTransactionFromTrongrid(txid) {
   }
 }
 
+async function fetchTronTransactionInfoFromTrongrid(txid) {
+  const txInfoUrl = "https://api.trongrid.io/wallet/gettransactioninfobyid";
+  try {
+    const response = await http.post(txInfoUrl, { value: txid }, AXIOS_HTTP_OPTIONS);
+    const info = response.data && typeof response.data === "object" ? response.data : null;
+    return info && Object.keys(info).length > 0 ? info : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 async function detectEvmTransferRecipientFromReceipt({ chainId, network, txid }) {
   let receipt = await fetchEvmTransactionReceiptFromEtherscanV2({
     chainId,
@@ -1700,6 +1711,31 @@ async function resolveTron(txid) {
       from,
       to,
       amount: nativeAmount
+    };
+  }
+
+  const tronTxInfo = await fetchTronTransactionInfoFromTrongrid(txid);
+  if (tronTxInfo) {
+    const internalTx = Array.isArray(tronTxInfo.internal_transactions)
+      ? tronTxInfo.internal_transactions.find(
+          (it) => it && (it.transferTo_address || it.to_address || it.caller_address)
+        )
+      : null;
+    const toHex =
+      (internalTx && (internalTx.transferTo_address || internalTx.to_address)) ||
+      null;
+    const to = tronHexAddressToBase58(toHex) || null;
+    const hasLogs = Array.isArray(tronTxInfo.log) && tronTxInfo.log.length > 0;
+
+    return {
+      status: "FOUND",
+      network: "Tron",
+      token: hasLogs ? "UNKNOWN" : "TRX",
+      token_standard: hasLogs ? "TRC20" : "UNKNOWN",
+      explorer_link: `https://tronscan.org/#/transaction/${txid}`,
+      from: null,
+      to,
+      amount: null
     };
   }
 
