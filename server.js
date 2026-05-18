@@ -76,10 +76,59 @@ app.use((req, res, next) => {
   next();
 });
 
+let inFlightRequests = 0;
+app.use((req, res, next) => {
+  if (req.path === "/healthz") return next();
+
+  if (inFlightRequests >= MAX_IN_FLIGHT_REQUESTS) {
+    logEvent("error", "request_rejected_backpressure", {
+      request_id: req.requestId || null,
+      method: req.method,
+      path: req.path,
+      in_flight: inFlightRequests,
+      max_in_flight: MAX_IN_FLIGHT_REQUESTS
+    });
+    return res.status(503).json({
+      version: APP_VERSION,
+      status: "BUSY",
+      message: "Server is busy, please retry shortly."
+    });
+  }
+
+  inFlightRequests += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    inFlightRequests = Math.max(0, inFlightRequests - 1);
+  };
+  res.on("finish", release);
+  res.on("close", release);
+
+  res.setTimeout(REQUEST_TIMEOUT_MS, () => {
+    if (res.headersSent) return;
+    logEvent("error", "request_timeout", {
+      request_id: req.requestId || null,
+      method: req.method,
+      path: req.path,
+      timeout_ms: REQUEST_TIMEOUT_MS
+    });
+    res.status(504).json({
+      version: APP_VERSION,
+      status: "TIMEOUT",
+      message: "Request timed out"
+    });
+  });
+
+  return next();
+});
+
 const APP_VERSION = "zendesk-post-v1";
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = String(process.env.NODE_ENV || "development").toLowerCase();
 const IS_PRODUCTION = NODE_ENV === "production";
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || 45000);
+const MAX_IN_FLIGHT_REQUESTS = Number(process.env.MAX_IN_FLIGHT_REQUESTS || 40);
 const INTERNAL_API_KEY = String(process.env.INTERNAL_API_KEY || "");
 const APP_SECRET = String(process.env.APP_SECRET || "");
 const ZENDESK_ALLOWED_ORIGIN = "https://fundingpips41501744038783.zendesk.com";
@@ -3375,6 +3424,19 @@ function startServer() {
     });
   });
 }
+
+process.on("unhandledRejection", (reason) => {
+  logEvent("error", "process_unhandled_rejection", {
+    reason: reason && reason.message ? reason.message : String(reason || "unknown")
+  });
+});
+
+process.on("uncaughtException", (error) => {
+  logEvent("error", "process_uncaught_exception", {
+    message: error && error.message ? error.message : "unknown",
+    stack: error && error.stack ? error.stack : null
+  });
+});
 
 if (require.main === module) {
   startServer();
