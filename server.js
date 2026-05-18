@@ -543,6 +543,63 @@ function pickTransferRecipient(transfer) {
   );
 }
 
+function tronHexAddressToBase58(hexAddress) {
+  try {
+    const raw = String(hexAddress || "").trim().replace(/^0x/i, "").toLowerCase();
+    if (!/^[0-9a-f]+$/.test(raw)) return null;
+    const normalized = raw.length === 40 ? `41${raw}` : raw;
+    if (normalized.length !== 42 || !normalized.startsWith("41")) return null;
+
+    const body = Buffer.from(normalized, "hex");
+    const checksum = crypto
+      .createHash("sha256")
+      .update(crypto.createHash("sha256").update(body).digest())
+      .digest()
+      .subarray(0, 4);
+    const payload = Buffer.concat([body, checksum]);
+
+    const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let num = BigInt(`0x${payload.toString("hex")}`);
+    let encoded = "";
+    while (num > 0n) {
+      const mod = Number(num % 58n);
+      encoded = alphabet[mod] + encoded;
+      num /= 58n;
+    }
+    for (let i = 0; i < payload.length && payload[i] === 0; i += 1) {
+      encoded = `1${encoded}`;
+    }
+    return encoded || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function decodeTronTransferCalldata(dataHex) {
+  const clean = String(dataHex || "").toLowerCase().replace(/^0x/, "");
+  // ERC20/TRC20 transfer(address,uint256)
+  if (!clean.startsWith("a9059cbb") || clean.length < 8 + 64 + 64) return null;
+  const toWord = clean.slice(8, 72);
+  const amountWord = clean.slice(72, 136);
+  const to20 = toWord.slice(-40);
+  const to41 = `41${to20}`;
+  return {
+    to: tronHexAddressToBase58(to41) || null,
+    amountRaw: amountWord
+  };
+}
+
+async function fetchTronTransactionFromTrongrid(txid) {
+  const txUrl = "https://api.trongrid.io/wallet/gettransactionbyid";
+  try {
+    const response = await http.post(txUrl, { value: txid }, AXIOS_HTTP_OPTIONS);
+    const tx = response.data && typeof response.data === "object" ? response.data : null;
+    return tx && tx.txID ? tx : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 async function detectEvmTransferRecipientFromReceipt({ chainId, network, txid }) {
   let receipt = await fetchEvmTransactionReceiptFromEtherscanV2({
     chainId,
@@ -1568,6 +1625,32 @@ async function resolveTron(txid) {
       from: data.ownerAddress || null,
       to: data.toAddress || null,
       amount: isNative ? formatUnitsFromBase(data.amount, 6) : null
+    };
+  }
+
+  const tronTx = await fetchTronTransactionFromTrongrid(txid);
+  if (tronTx) {
+    const contract = tronTx.raw_data && Array.isArray(tronTx.raw_data.contract) ? tronTx.raw_data.contract[0] : null;
+    const contractType = String((contract && contract.type) || "");
+    const value = (contract && contract.parameter && contract.parameter.value) || {};
+    const decodedTransfer = decodeTronTransferCalldata(value.data);
+
+    const from = tronHexAddressToBase58(value.owner_address) || null;
+    const nativeTo = tronHexAddressToBase58(value.to_address) || null;
+    const to = nativeTo || decodedTransfer?.to || null;
+
+    const nativeAmount =
+      value.amount !== undefined && value.amount !== null ? formatUnitsFromBase(value.amount, 6) : null;
+
+    return {
+      status: "FOUND",
+      network: "Tron",
+      token: contractType === "TransferContract" ? "TRX" : "UNKNOWN",
+      token_standard: contractType === "TransferContract" ? "NATIVE" : "TRC20",
+      explorer_link: `https://tronscan.org/#/transaction/${txid}`,
+      from,
+      to,
+      amount: nativeAmount
     };
   }
 
